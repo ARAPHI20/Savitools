@@ -15,8 +15,12 @@ async function parseJson<T>(response: Response): Promise<T> {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const message = Array.isArray(body.message)
       ? body.message.join(', ')
-      : body.message ?? response.statusText;
+      : (body.message ?? response.statusText);
     throw new Error(message);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json() as Promise<T>;
@@ -81,7 +85,10 @@ export async function getWorkspace(tool: WorkspaceTool) {
   );
 }
 
-export async function saveWorkspace(tool: WorkspaceTool, data: Record<string, unknown>) {
+export async function saveWorkspace(
+  tool: WorkspaceTool,
+  data: Record<string, unknown>,
+) {
   return apiFetch<{ tool: WorkspaceTool; data: Record<string, unknown> }>(
     `/workspaces/${tool}`,
     {
@@ -117,7 +124,10 @@ interface ContractInfo {
   network: string;
 }
 
-async function apiFetchFormData<T>(path: string, formData: FormData): Promise<T> {
+async function apiFetchFormData<T>(
+  path: string,
+  formData: FormData,
+): Promise<T> {
   const response = await fetch(`${API_URL}/v1${path}`, {
     method: 'POST',
     credentials: 'include',
@@ -175,9 +185,10 @@ export interface PlaygroundProxyResult {
 }
 
 export async function fetchPlaygroundSpec(provider: PlaygroundProvider) {
-  return apiFetch<{ provider: PlaygroundProvider; spec: Record<string, unknown> }>(
-    `/playground/spec/${provider}`,
-  );
+  return apiFetch<{
+    provider: PlaygroundProvider;
+    spec: Record<string, unknown>;
+  }>(`/playground/spec/${provider}`);
 }
 
 export async function proxyPlaygroundRequest(dto: PlaygroundProxyRequest) {
@@ -277,13 +288,22 @@ export async function findSimulatorPaths(params: FindPathsParams) {
   searchParams.set('source_asset_type', params.source_asset_type);
   searchParams.set('amount', params.amount);
   searchParams.set('destination_asset_type', params.destination_asset_type);
-  if (params.source_asset_code) searchParams.set('source_asset_code', params.source_asset_code);
-  if (params.source_asset_issuer) searchParams.set('source_asset_issuer', params.source_asset_issuer);
-  if (params.destination_asset_code) searchParams.set('destination_asset_code', params.destination_asset_code);
-  if (params.destination_asset_issuer) searchParams.set('destination_asset_issuer', params.destination_asset_issuer);
+  if (params.source_asset_code)
+    searchParams.set('source_asset_code', params.source_asset_code);
+  if (params.source_asset_issuer)
+    searchParams.set('source_asset_issuer', params.source_asset_issuer);
+  if (params.destination_asset_code)
+    searchParams.set('destination_asset_code', params.destination_asset_code);
+  if (params.destination_asset_issuer)
+    searchParams.set(
+      'destination_asset_issuer',
+      params.destination_asset_issuer,
+    );
   if (params.network) searchParams.set('network', params.network);
 
-  return apiFetch<FindPathsResponse>(`/simulator/paths?${searchParams.toString()}`);
+  return apiFetch<FindPathsResponse>(
+    `/simulator/paths?${searchParams.toString()}`,
+  );
 }
 
 export async function estimateSlippage(params: EstimateParams) {
@@ -393,7 +413,9 @@ export async function fundFromFriendbot(publicKey: string) {
 }
 
 export async function getBalances(publicKey: string) {
-  return apiFetch<BalancesResult>(`/wallet/balances?publicKey=${encodeURIComponent(publicKey)}`);
+  return apiFetch<BalancesResult>(
+    `/wallet/balances?publicKey=${encodeURIComponent(publicKey)}`,
+  );
 }
 
 export async function sendPayment(
@@ -453,7 +475,9 @@ export async function sandboxFund(publicKey: string) {
 }
 
 export async function sandboxGetAccount(publicKey: string) {
-  return apiFetch<SandboxAccountDetails>(`/sandbox/account/${encodeURIComponent(publicKey)}`);
+  return apiFetch<SandboxAccountDetails>(
+    `/sandbox/account/${encodeURIComponent(publicKey)}`,
+  );
 }
 
 export async function sandboxSendPayment(
@@ -510,7 +534,9 @@ export interface SimulateStrictReceiveResult {
   slippagePercent: string;
 }
 
-export type SimulatePathResult = SimulateStrictSendResult | SimulateStrictReceiveResult;
+export type SimulatePathResult =
+  | SimulateStrictSendResult
+  | SimulateStrictReceiveResult;
 
 export interface SimulateFeeResult {
   network: string;
@@ -615,15 +641,28 @@ export interface TxSummary {
   resultCode: string;
 }
 
-export async function inspectTransaction(hash: string, network: 'testnet' | 'mainnet' = 'testnet') {
-  return apiFetch<TransactionBreakdown>(`/inspector/tx/${encodeURIComponent(hash)}?network=${network}`);
+export async function inspectTransaction(
+  hash: string,
+  network: 'testnet' | 'mainnet' = 'testnet',
+) {
+  return apiFetch<TransactionBreakdown>(
+    `/inspector/tx/${encodeURIComponent(hash)}?network=${network}`,
+  );
 }
 
-export async function getAccountTransactions(publicKey: string, network: 'testnet' | 'mainnet' = 'testnet') {
-  return apiFetch<TxSummary[]>(`/inspector/account/${encodeURIComponent(publicKey)}/txs?network=${network}`);
+export async function getAccountTransactions(
+  publicKey: string,
+  network: 'testnet' | 'mainnet' = 'testnet',
+) {
+  return apiFetch<TxSummary[]>(
+    `/inspector/account/${encodeURIComponent(publicKey)}/txs?network=${network}`,
+  );
 }
 
-export async function decodeXdr(xdr: string, network: 'testnet' | 'mainnet' = 'testnet') {
+export async function decodeXdr(
+  xdr: string,
+  network: 'testnet' | 'mainnet' = 'testnet',
+) {
   return apiFetch<TransactionBreakdown>('/inspector/decode-xdr', {
     method: 'POST',
     body: JSON.stringify({ xdr, network }),

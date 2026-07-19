@@ -17,10 +17,15 @@ export class User {
   @Column({ unique: true })
   email!: string;
 
-  @Column({ name: 'password_hash', nullable: true })
+  @Column({ name: 'password_hash', type: 'varchar', nullable: true })
   passwordHash!: string | null;
 
-  @Column({ name: 'fluxa_tenant_id', nullable: true, unique: true })
+  @Column({
+    name: 'fluxa_tenant_id',
+    type: 'varchar',
+    nullable: true,
+    unique: true,
+  })
   fluxaTenantId!: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
