@@ -1,143 +1,202 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
-import { Watch } from './monitor-dashboard';
-import { AlertDialog } from './alert-dialog';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Activity,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ExternalLink,
+  FileCode2,
+  Pause,
+  Play,
+} from 'lucide-react';
+import { apiFetch } from '@/lib/api';
+import { Paginated, Watch, WatchEvent } from './monitor-types';
 
-interface StellarEvent {
-  id: string;
-  type: string;
-  amount?: string;
-  asset_type?: string;
-  asset_code?: string;
-  from?: string;
-  to?: string;
-  created_at: string;
-  transaction_hash: string;
-}
-
-export function LiveFeed({ watch }: { watch?: Watch }) {
-  const [events, setEvents] = useState<{ watchId: string; event: StellarEvent }[]>([]);
-  const [connected, setConnected] = useState(false);
+export function LiveFeed({
+  watch,
+  liveEvents,
+}: {
+  watch?: Watch;
+  liveEvents: WatchEvent[];
+}) {
+  const [history, setHistory] = useState<WatchEvent[]>([]);
   const [paused, setPaused] = useState(false);
-  const [isAlertOpen, setIsAlertOpen] = useState(false);
+  const feedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Determine websocket URL from API URL
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
-    const wsUrl = apiUrl.replace(/\/api$/, ''); // e.g., http://localhost:3001
-    
-    const socket: Socket = io(wsUrl, {
-      withCredentials: true,
-      transports: ['websocket', 'polling'],
-    });
+    if (!watch) {
+      setHistory([]);
+      return;
+    }
+    void apiFetch<Paginated<WatchEvent>>(
+      `/monitor/watches/${watch.id}/events?limit=100`,
+    ).then((page) => setHistory(page.items));
+  }, [watch]);
 
-    socket.on('connect', () => {
-      setConnected(true);
-    });
+  const events = useMemo(() => {
+    const byId = new Map<string, WatchEvent>();
+    [...liveEvents, ...history].forEach((event) => byId.set(event.id, event));
+    return Array.from(byId.values()).sort(
+      (left, right) =>
+        new Date(right.occurredAt).getTime() -
+        new Date(left.occurredAt).getTime(),
+    );
+  }, [history, liveEvents]);
 
-    socket.on('disconnect', () => {
-      setConnected(false);
-    });
-
-    socket.on('stellar_event', (data: { watchId: string; event: StellarEvent }) => {
-      setEvents(prev => {
-        // Prevent duplicates based on event ID
-        if (prev.some(e => e.event.id === data.event.id)) {
-          return prev;
-        }
-        return [data, ...prev].slice(0, 100); // keep last 100 events
-      });
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
+  useEffect(() => {
+    if (!paused && feedRef.current) {
+      feedRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [events.length, paused]);
 
   if (!watch) {
     return (
-      <div className="rounded-lg border border-border bg-card p-12 flex flex-col items-center justify-center text-center">
-        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
-          <svg className="w-6 h-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+      <div className="flex h-full items-center justify-center p-8 text-center">
+        <div>
+          <Activity className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+          <h3 className="font-medium">Select a watch</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Live ledger activity and saved history will appear here.
+          </p>
         </div>
-        <h3 className="text-lg font-medium mb-2">No Watch Selected</h3>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Select a watch from the sidebar or add a new one to view real-time Stellar activity.
-        </p>
       </div>
     );
   }
 
-  const filteredEvents = paused ? [] : events.filter(e => e.watchId === watch.id);
-
   return (
-    <div className="rounded-lg border border-border bg-card flex flex-col h-[600px]">
-      <div className="p-4 border-b border-border flex items-center justify-between">
-        <div>
+    <section className="flex min-h-0 flex-col border-b border-border">
+      <header className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">{watch.label || watch.address}</h3>
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} title={connected ? 'Connected' : 'Disconnected'} />
+            <h3 className="truncate text-sm font-semibold">
+              {watch.label || watch.publicKey}
+            </h3>
+            <ConnectionDot watch={watch} />
           </div>
-          <p className="text-xs text-muted-foreground truncate max-w-[300px] mt-1">{watch.address}</p>
+          <p className="truncate font-mono text-[11px] text-muted-foreground">
+            {watch.publicKey}
+          </p>
+          {watch.lastError && watch.status === 'error' && (
+            <p className="mt-1 truncate text-xs text-red-500">
+              {watch.lastError}
+            </p>
+          )}
         </div>
-        
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setPaused(!paused)}
-            className="text-xs font-medium px-3 py-1.5 rounded-md border border-border hover:bg-muted"
-          >
-            {paused ? 'Resume' : 'Pause'}
-          </button>
-          <button 
-            onClick={() => setIsAlertOpen(true)}
-            className="text-xs font-medium px-3 py-1.5 rounded-md bg-primary/10 text-primary hover:bg-primary/20"
-          >
-            Configure Alert
-          </button>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={() => setPaused((current) => !current)}
+          className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
+        >
+          {paused ? (
+            <Play className="h-3.5 w-3.5" />
+          ) : (
+            <Pause className="h-3.5 w-3.5" />
+          )}
+          {paused ? 'Resume scroll' : 'Pause scroll'}
+        </button>
+      </header>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {filteredEvents.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-muted-foreground">
-            <p className="text-sm">Listening for events...</p>
-            <p className="text-xs mt-2">Transactions will appear here in real-time.</p>
+      <div
+        ref={feedRef}
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4"
+      >
+        {events.map((event) => (
+          <EventCard key={event.id} event={event} watch={watch} />
+        ))}
+        {events.length === 0 && (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Listening for {watch.eventTypes.join(' and ')} events...
           </div>
-        ) : (
-          filteredEvents.map((item) => {
-            const ev = item.event;
-            return (
-              <div key={ev.id} className="p-3 rounded-md border border-border bg-background hover:border-primary/50 transition-colors">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-primary">{ev.type}</span>
-                  <span className="text-xs text-muted-foreground">{new Date(ev.created_at).toLocaleTimeString()}</span>
-                </div>
-                {ev.amount && (
-                  <p className="text-sm font-medium">
-                    {ev.amount} {ev.asset_code || 'XLM'}
-                  </p>
-                )}
-                {ev.from && <p className="text-xs text-muted-foreground mt-1 truncate">From: {ev.from}</p>}
-                {ev.to && <p className="text-xs text-muted-foreground truncate">To: {ev.to}</p>}
-                <a 
-                  href={`https://stellar.expert/explorer/${watch.network}/tx/${ev.transaction_hash}`} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="text-[10px] text-blue-500 hover:underline mt-2 inline-block truncate max-w-full"
-                >
-                  {ev.transaction_hash}
-                </a>
-              </div>
-            );
-          })
         )}
       </div>
-
-      {isAlertOpen && (
-        <AlertDialog watchId={watch.id} onClose={() => setIsAlertOpen(false)} />
-      )}
-    </div>
+    </section>
   );
+}
+
+function EventCard({ event, watch }: { event: WatchEvent; watch: Watch }) {
+  const payload = event.payload;
+  const amount = text(payload.amount);
+  const assetType = text(payload.asset_type);
+  const assetCode = text(payload.asset_code);
+  const asset = assetType === 'native' ? 'XLM' : assetCode;
+  const from = text(payload.from ?? payload.source_account);
+  const to = text(payload.to ?? payload.account);
+  const transactionHash = text(
+    payload.transaction_hash ?? payload.hash ?? payload.transactionHash,
+  );
+  const Icon =
+    event.eventType === 'contract'
+      ? FileCode2
+      : to === watch.publicKey
+        ? ArrowDownLeft
+        : from === watch.publicKey
+          ? ArrowUpRight
+          : Activity;
+
+  return (
+    <article className="rounded-lg border border-border bg-background p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 gap-3">
+          <div className="rounded-md bg-primary/10 p-2 text-primary">
+            <Icon className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide">
+              {event.eventType}
+            </p>
+            {amount && (
+              <p className="text-sm font-medium">
+                {amount} {asset || ''}
+              </p>
+            )}
+            {from && (
+              <p className="truncate text-xs text-muted-foreground">
+                From {from}
+              </p>
+            )}
+            {to && (
+              <p className="truncate text-xs text-muted-foreground">To {to}</p>
+            )}
+          </div>
+        </div>
+        <div className="text-right">
+          <time className="block text-[11px] text-muted-foreground">
+            {new Date(event.occurredAt).toLocaleString()}
+          </time>
+          {transactionHash && (
+            <a
+              href={`https://stellar.expert/explorer/${watch.network}/tx/${transactionHash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary"
+            >
+              Stellar Expert <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ConnectionDot({ watch }: { watch: Watch }) {
+  const color =
+    watch.status === 'streaming'
+      ? 'bg-emerald-500'
+      : watch.status === 'polling'
+        ? 'bg-amber-500'
+        : 'bg-red-500';
+  return (
+    <span
+      className={`h-2.5 w-2.5 shrink-0 rounded-full ${color}`}
+      title={watch.lastError ?? `${watch.status} via ${watch.streamMode}`}
+    />
+  );
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : undefined;
 }

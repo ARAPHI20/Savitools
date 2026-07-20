@@ -1,126 +1,177 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Webhook } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { AlertEvent, Paginated, Watch } from './monitor-types';
 
-export function AlertDialog({ watchId, onClose }: { watchId: string; onClose: () => void }) {
-  const [conditionType, setConditionType] = useState('payment_received');
-  const [threshold, setThreshold] = useState('');
-  const [channel, setChannel] = useState<'email' | 'webhook'>('email');
-  const [destination, setDestination] = useState('');
-  const [loading, setLoading] = useState(false);
+export function AlertPanel({
+  watch,
+  liveAlerts,
+}: {
+  watch?: Watch;
+  liveAlerts: AlertEvent[];
+}) {
+  const [history, setHistory] = useState<AlertEvent[]>([]);
+  const [webhookOpen, setWebhookOpen] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!destination) return;
-    
-    setLoading(true);
+  useEffect(() => {
+    if (!watch) {
+      setHistory([]);
+      return;
+    }
+    void apiFetch<Paginated<AlertEvent>>(
+      `/monitor/watches/${watch.id}/alerts?limit=50`,
+    ).then((page) => setHistory(page.items));
+  }, [watch]);
+
+  const alerts = useMemo(() => {
+    const byId = new Map<string, AlertEvent>();
+    [...liveAlerts, ...history].forEach((alert) => byId.set(alert.id, alert));
+    return Array.from(byId.values()).sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() -
+        new Date(left.createdAt).getTime(),
+    );
+  }, [history, liveAlerts]);
+
+  if (!watch) return <div className="border-t border-border" />;
+
+  const resend = async (alert: AlertEvent) => {
+    const updated = await apiFetch<AlertEvent>(
+      `/monitor/watches/${watch.id}/alerts/${alert.id}/resend`,
+      { method: 'POST' },
+    );
+    setHistory((current) => [
+      updated,
+      ...current.filter((item) => item.id !== updated.id),
+    ]);
+  };
+
+  return (
+    <section className="relative z-[60] min-h-0 overflow-y-auto bg-card p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Fired alerts</h3>
+          <p className="text-xs text-muted-foreground">
+            Payload and delivery status
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setWebhookOpen((current) => !current)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs"
+        >
+          <Webhook className="h-3.5 w-3.5" /> Webhook
+        </button>
+      </div>
+
+      {webhookOpen && <WebhookForm onSaved={() => setWebhookOpen(false)} />}
+
+      <div className="space-y-2">
+        {alerts.map((alert) => (
+          <div
+            key={alert.id}
+            className="flex items-start gap-3 rounded-md border border-border p-3"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex items-center gap-2">
+                <Status status={alert.deliveryStatus} />
+                <time className="text-[11px] text-muted-foreground">
+                  {new Date(alert.createdAt).toLocaleString()}
+                </time>
+              </div>
+              <pre className="max-h-16 overflow-hidden whitespace-pre-wrap break-all text-[11px] text-muted-foreground">
+                {JSON.stringify(alert.payload, null, 2)}
+              </pre>
+            </div>
+            <button
+              type="button"
+              onClick={() => void resend(alert)}
+              className="inline-flex items-center gap-1 text-xs text-primary"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Re-send
+            </button>
+          </div>
+        ))}
+        {alerts.length === 0 && (
+          <p className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+            No alert rules have fired for this watch.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WebhookForm({ onSaved }: { onSaved: () => void }) {
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
     try {
-      await apiFetch(`/monitor/watches/${watchId}/alerts`, {
+      await apiFetch('/monitor/webhooks', {
         method: 'POST',
-        body: JSON.stringify({ conditionType, threshold, channel, destination }),
+        body: JSON.stringify({ url, secret }),
       });
-      alert('Alert configuration saved!');
-      onClose();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to save alert');
-    } finally {
-      setLoading(false);
+      onSaved();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Failed to save webhook',
+      );
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card border border-border rounded-lg p-6 w-full max-w-md">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Configure Alert</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">&times;</button>
-        </div>
+    <form
+      onSubmit={submit}
+      className="mb-3 grid gap-2 rounded-md border border-border bg-muted/20 p-3 md:grid-cols-[1fr_1fr_auto]"
+    >
+      <input
+        type="url"
+        value={url}
+        onChange={(event) => setUrl(event.target.value)}
+        placeholder="https://example.com/hooks/stellar"
+        className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+        required
+      />
+      <input
+        type="password"
+        value={secret}
+        onChange={(event) => setSecret(event.target.value)}
+        placeholder="HMAC secret, at least 16 characters"
+        className="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+        minLength={16}
+        required
+      />
+      <button
+        type="submit"
+        className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground"
+      >
+        Save
+      </button>
+      {error && (
+        <p className="text-xs text-destructive md:col-span-3">{error}</p>
+      )}
+    </form>
+  );
+}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Event Type</label>
-            <select 
-              value={conditionType} 
-              onChange={e => setConditionType(e.target.value)}
-              className="w-full mt-1 bg-background border border-border rounded-md px-3 py-2 text-sm"
-            >
-              <option value="payment_received">Payment Received</option>
-              <option value="contract_invoked">Contract Invoked</option>
-              <option value="trustline_created">Trustline Created</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium">Threshold Amount (Optional)</label>
-            <input 
-              type="number" 
-              step="any"
-              value={threshold} 
-              onChange={e => setThreshold(e.target.value)}
-              placeholder="e.g. 100"
-              className="w-full mt-1 bg-background border border-border rounded-md px-3 py-2 text-sm"
-            />
-            <p className="text-xs text-muted-foreground mt-1">Leave empty to alert on all events</p>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium">Notification Channel</label>
-            <div className="flex gap-4 mt-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input 
-                  type="radio" 
-                  name="channel" 
-                  value="email" 
-                  checked={channel === 'email'} 
-                  onChange={() => setChannel('email')} 
-                />
-                Email
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input 
-                  type="radio" 
-                  name="channel" 
-                  value="webhook" 
-                  checked={channel === 'webhook'} 
-                  onChange={() => setChannel('webhook')} 
-                />
-                Webhook
-              </label>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium">Destination</label>
-            <input 
-              type={channel === 'email' ? 'email' : 'url'} 
-              value={destination} 
-              onChange={e => setDestination(e.target.value)}
-              placeholder={channel === 'email' ? 'your@email.com' : 'https://api.yoursite.com/webhook'}
-              className="w-full mt-1 bg-background border border-border rounded-md px-3 py-2 text-sm"
-              required
-            />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-4 border-t border-border mt-6">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium rounded-md border border-border hover:bg-muted"
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              disabled={loading || !destination}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              {loading ? 'Saving...' : 'Save Alert'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+function Status({ status }: { status: AlertEvent['deliveryStatus'] }) {
+  const color =
+    status === 'delivered'
+      ? 'bg-emerald-500/15 text-emerald-600'
+      : status === 'failed'
+        ? 'bg-red-500/15 text-red-600'
+        : 'bg-amber-500/15 text-amber-600';
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] capitalize ${color}`}
+    >
+      {status}
+    </span>
   );
 }

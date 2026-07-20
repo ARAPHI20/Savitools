@@ -15,6 +15,7 @@ import { SimulatorModule } from './modules/simulator/simulator.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
+import { CreateLedgerMonitor1752926400000 } from './database/migrations/1752926400000-create-ledger-monitor';
 
 @Module({
   imports: [
@@ -27,6 +28,8 @@ import { InspectorModule } from './modules/inspector/inspector.module';
         url: config.get<string>('DATABASE_URL'),
         autoLoadEntities: true,
         synchronize: config.get<string>('NODE_ENV') !== 'production',
+        migrations: [CreateLedgerMonitor1752926400000],
+        migrationsRun: config.get<string>('RUN_MIGRATIONS') === 'true',
         logging: config.get<string>('NODE_ENV') === 'development',
       }),
     }),

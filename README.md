@@ -179,6 +179,7 @@ Complete guides and API reference for integrating with SaviTools:
 |----------|---------|
 | **[API Reference](docs/api-reference.md)** | Complete endpoint catalog with examples, parameters, and error codes |
 | **[Quickstart Guide](docs/quickstart.md)** | End-to-end walkthrough: generate keypair → fund → send payment in 5 minutes |
+| **[Ledger Monitor Load Test](docs/ledger-monitor-load-test.md)** | Recorded result from the one-hour, 50-connection SSE load test |
 | **[Swagger UI](/api/docs)** | Interactive API explorer (available in dev/staging; disabled in production) |
 
 ### Quick Links
