@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -6,11 +7,13 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiCookieAuth, ApiOperation, ApiParam, ApiTags, ApiResponse } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiOperation, ApiParam, ApiQuery, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ListHistoryDto } from './dto/list-history.dto';
 import { ProxyRequestDto } from './dto/proxy-request.dto';
 import { SaveApiKeyDto } from './dto/save-api-key.dto';
 import { UpdateApiKeyDto } from './dto/update-api-key.dto';
@@ -78,5 +81,39 @@ export class PlaygroundController {
   async deleteKey(@CurrentUser() user: { id: string }, @Param('id') id: string) {
     await this.playgroundService.deleteKey(id, user.id);
     return { success: true };
+  }
+
+  @Get('history')
+  @ApiOperation({ summary: 'List past proxied requests for the current user' })
+  @ApiResponse({ status: 200, description: 'Request history retrieved' })
+  async listHistory(@CurrentUser() user: { id: string }, @Query() query: ListHistoryDto) {
+    return this.playgroundService.listHistory(user.id, query);
+  }
+
+  @Get('history/diff')
+  @ApiOperation({ summary: 'Diff the responses of two history entries' })
+  @ApiQuery({ name: 'a', description: 'First history entry ID' })
+  @ApiQuery({ name: 'b', description: 'Second history entry ID' })
+  @ApiResponse({ status: 200, description: 'Diff computed successfully' })
+  @ApiResponse({ status: 404, description: 'History entry not found' })
+  async diffHistory(
+    @CurrentUser() user: { id: string },
+    @Query('a') a: string,
+    @Query('b') b: string,
+  ) {
+    if (!a || !b) {
+      throw new BadRequestException('Both "a" and "b" history entry IDs are required');
+    }
+    const diff = await this.playgroundService.diffHistory(a, b, user.id);
+    return { a, b, diff };
+  }
+
+  @Get('history/:id')
+  @ApiOperation({ summary: 'Fetch a single history entry' })
+  @ApiParam({ name: 'id', description: 'History entry ID' })
+  @ApiResponse({ status: 200, description: 'History entry retrieved' })
+  @ApiResponse({ status: 404, description: 'History entry not found' })
+  async getHistoryEntry(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    return this.playgroundService.getHistoryEntry(id, user.id);
   }
 }

@@ -12,7 +12,9 @@ import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'crypt
 import { Repository } from 'typeorm';
 import { SaveApiKeyDto } from './dto/save-api-key.dto';
 import { UpdateApiKeyDto } from './dto/update-api-key.dto';
+import { ListHistoryDto } from './dto/list-history.dto';
 import { ApiKey, ApiKeyProvider } from './entities/api-key.entity';
+import { PlaygroundHistory } from './entities/playground-history.entity';
 import { ProxyRequestDto } from './dto/proxy-request.dto';
 
 interface CachedSpec {
@@ -25,6 +27,15 @@ export interface ProxyResult {
   headers: Record<string, string>;
   body: unknown;
   latencyMs: number;
+}
+
+export type DiffChangeType = 'added' | 'removed' | 'changed' | 'unchanged';
+
+export interface DiffEntry {
+  path: string;
+  type: DiffChangeType;
+  before?: unknown;
+  after?: unknown;
 }
 
 const ALGORITHM = 'aes-256-gcm';
@@ -42,6 +53,8 @@ export class PlaygroundService {
   constructor(
     @InjectRepository(ApiKey)
     private readonly apiKeysRepository: Repository<ApiKey>,
+    @InjectRepository(PlaygroundHistory)
+    private readonly historyRepository: Repository<PlaygroundHistory>,
     private readonly configService: ConfigService,
   ) {
     this.specTtlMs = this.configService.get<number>('PLAYGROUND_SPEC_TTL_MS', 3_600_000);
@@ -158,12 +171,77 @@ export class PlaygroundService {
       `[proxy] ${dto.provider} ${dto.method} ${dto.path} → ${response.status} (${latencyMs}ms)`,
     );
 
+    await this.recordHistory(userId, dto, {
+      status: response.status,
+      headers: responseHeaders,
+      body,
+      latencyMs,
+    });
+
     return {
       status: response.status,
       headers: responseHeaders,
       body,
       latencyMs,
     };
+  }
+
+  private async recordHistory(userId: string, dto: ProxyRequestDto, result: ProxyResult): Promise<void> {
+    try {
+      const entry = this.historyRepository.create({
+        userId,
+        provider: dto.provider,
+        method: dto.method.toUpperCase(),
+        path: dto.path,
+        query: dto.query ?? null,
+        requestHeaders: dto.headers ?? null,
+        requestBody: dto.body ?? null,
+        responseStatus: result.status,
+        responseHeaders: result.headers,
+        responseBody: result.body,
+        latencyMs: result.latencyMs,
+      });
+      await this.historyRepository.save(entry);
+    } catch (error) {
+      this.logger.warn(`Failed to record playground history: ${error}`);
+    }
+  }
+
+  async listHistory(
+    userId: string,
+    query: ListHistoryDto,
+  ): Promise<{ items: PlaygroundHistory[]; total: number }> {
+    const limit = query.limit ?? 25;
+    const offset = query.offset ?? 0;
+
+    const [items, total] = await this.historyRepository.findAndCount({
+      where: {
+        userId,
+        ...(query.provider ? { provider: query.provider } : {}),
+      },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return { items, total };
+  }
+
+  async getHistoryEntry(id: string, userId: string): Promise<PlaygroundHistory> {
+    const entry = await this.historyRepository.findOne({ where: { id, userId } });
+    if (!entry) {
+      throw new NotFoundException('History entry not found');
+    }
+    return entry;
+  }
+
+  async diffHistory(idA: string, idB: string, userId: string): Promise<DiffEntry[]> {
+    const [entryA, entryB] = await Promise.all([
+      this.getHistoryEntry(idA, userId),
+      this.getHistoryEntry(idB, userId),
+    ]);
+
+    return diffValues(entryA.responseBody, entryB.responseBody, '$');
   }
 
   async saveKey(userId: string, dto: SaveApiKeyDto): Promise<{ id: string; label: string; provider: ApiKeyProvider }> {
@@ -294,4 +372,69 @@ export class PlaygroundService {
     decrypted += decipher.final('utf8');
     return decrypted;
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => deepEqual(value, b[index]));
+  }
+
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    return (
+      aKeys.length === bKeys.length &&
+      aKeys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && deepEqual(a[key], b[key]))
+    );
+  }
+
+  return false;
+}
+
+export function diffValues(before: unknown, after: unknown, path = '$'): DiffEntry[] {
+  if (deepEqual(before, after)) {
+    return [{ path, type: 'unchanged' }];
+  }
+
+  if (isPlainObject(before) && isPlainObject(after)) {
+    const entries: DiffEntry[] = [];
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const key of keys) {
+      const childPath = `${path}.${key}`;
+      const hasBefore = Object.prototype.hasOwnProperty.call(before, key);
+      const hasAfter = Object.prototype.hasOwnProperty.call(after, key);
+      if (hasBefore && !hasAfter) {
+        entries.push({ path: childPath, type: 'removed', before: before[key] });
+      } else if (!hasBefore && hasAfter) {
+        entries.push({ path: childPath, type: 'added', after: after[key] });
+      } else {
+        entries.push(...diffValues(before[key], after[key], childPath));
+      }
+    }
+    return entries;
+  }
+
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const entries: DiffEntry[] = [];
+    const length = Math.max(before.length, after.length);
+    for (let i = 0; i < length; i++) {
+      const childPath = `${path}[${i}]`;
+      if (i >= before.length) {
+        entries.push({ path: childPath, type: 'added', after: after[i] });
+      } else if (i >= after.length) {
+        entries.push({ path: childPath, type: 'removed', before: before[i] });
+      } else {
+        entries.push(...diffValues(before[i], after[i], childPath));
+      }
+    }
+    return entries;
+  }
+
+  return [{ path, type: 'changed', before, after }];
 }
