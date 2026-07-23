@@ -96,8 +96,8 @@ export class InspectorService {
       server.effects().forTransaction(hash).limit(200).call(),
     ]);
 
-    const effects = effectsPage.records as Array<Record<string, unknown>>;
-    const horizonOps = opsPage.records as Array<Record<string, unknown>>;
+    const effects = effectsPage.records as unknown as Array<Record<string, unknown>>;
+    const horizonOps = opsPage.records as unknown as Array<Record<string, unknown>>;
 
     // Decode XDR envelope for operations with full field resolution
     const passphrase = this.networkPassphrase(network);
@@ -147,7 +147,7 @@ export class InspectorService {
       maxFee: String(horizonTx.max_fee ?? '0'),
       memo: (horizonTx.memo ?? null) as string | null,
       memoType: horizonTx.memo_type,
-      timeBounds: this.extractTimeBounds(horizonTx.valid_before, horizonTx.valid_after),
+      timeBounds: this.extractTimeBounds((horizonTx as any).valid_before, (horizonTx as any).valid_after),
       signatures: (horizonTx as any).signatures ?? [],
       success: horizonTx.successful,
       resultCode: txResultCode,

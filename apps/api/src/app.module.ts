@@ -45,14 +45,6 @@ import { CreateLedgerMonitor1752926400000 } from './database/migrations/17529264
     WebhookModule,
     ComposerModule,
     InspectorModule,
-
-    // Feature modules — added as each is built
-    // TransactionModule,
-    // WalletModule,
-    WebhookModule,
-    WalletModule,
-    // WebhookModule,
-    SimulatorModule,
   ],
   controllers: [AppController],
   providers: [AppService],

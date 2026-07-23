@@ -222,8 +222,8 @@ function buildOp(dto: OperationDto): ReturnType<typeof Operation.payment> {
     case 'set_options':
       return Operation.setOptions({
         inflationDest: dto.inflationDest,
-        clearFlags: dto.clearFlags,
-        setFlags: dto.setFlags,
+        clearFlags: dto.clearFlags as any,
+        setFlags: dto.setFlags as any,
         masterWeight: dto.masterWeight,
         lowThreshold: dto.lowThreshold,
         medThreshold: dto.medThreshold,
@@ -360,7 +360,7 @@ export class ComposerService {
       return {
         success: true,
         hash: result.hash,
-        fee: result.fee_charged,
+        fee: (result as any).fee_charged,
         resultCodes: null,
         operationResults: null,
         ledger: result.ledger,

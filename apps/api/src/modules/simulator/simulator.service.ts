@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { Direction, AssetType, FindPathsDto } from './dto/find-paths.dto';
 import { EstimateDto } from './dto/estimate.dto';
+import { SimulateStrictSendDto } from './dto/strict-send.dto';
+import { SimulateStrictReceiveDto } from './dto/strict-receive.dto';
 
 export interface SimulatedAsset {
   type: 'native' | 'credit_alphanum4' | 'credit_alphanum12';
@@ -28,9 +30,7 @@ export interface EstimateResult {
   source_amount: string;
   destination_amount: string;
   path: SimulatedAsset[];
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import { SimulateStrictSendDto } from './dto/strict-send.dto';
-import { SimulateStrictReceiveDto } from './dto/strict-receive.dto';
+}
 
 export interface PathHop {
   assetType: string;
@@ -38,7 +38,7 @@ export interface PathHop {
   assetIssuer: string | null;
 }
 
-export interface SimulatedPath {
+export interface HorizonSimulatedPath {
   sourceAmount: string;
   destinationAmount: string;
   path: PathHop[];
@@ -53,8 +53,8 @@ export interface StrictSendResult {
   network: string;
   mode: 'strict_send';
   totalPathsFound: number;
-  paths: SimulatedPath[];
-  bestPath: SimulatedPath;
+  paths: HorizonSimulatedPath[];
+  bestPath: HorizonSimulatedPath;
   slippagePercent: string;
 }
 
@@ -65,8 +65,8 @@ export interface StrictReceiveResult {
   network: string;
   mode: 'strict_receive';
   totalPathsFound: number;
-  paths: SimulatedPath[];
-  bestPath: SimulatedPath;
+  paths: HorizonSimulatedPath[];
+  bestPath: HorizonSimulatedPath;
   sourceAmountNeeded: string;
   slippagePercent: string;
 }
@@ -313,6 +313,8 @@ export class SimulatorService {
         path: intermediateAssets,
       };
     }
+  }
+
   private readonly horizonUrls: Record<string, string> = {
     mainnet: 'https://horizon.stellar.org',
     testnet: 'https://horizon-testnet.stellar.org',
@@ -397,7 +399,7 @@ export class SimulatorService {
       );
     }
 
-    const paths: SimulatedPath[] = records.map((record) => {
+    const paths: HorizonSimulatedPath[] = records.map((record) => {
       const destAmount = record.destination_amount;
       const rate = (Number(destAmount) / Number(dto.sourceAmount)).toString();
       return {
@@ -469,7 +471,7 @@ export class SimulatorService {
       );
     }
 
-    const paths: SimulatedPath[] = records.map((record) => {
+    const paths: HorizonSimulatedPath[] = records.map((record) => {
       const srcAmount = record.source_amount;
       const rate = (Number(dto.destAmount) / Number(srcAmount)).toString();
       return {
