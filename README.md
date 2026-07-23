@@ -108,14 +108,26 @@ npm install
 cp .env.example .env
 ```
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `STELLAR_NETWORK` | `testnet` or `mainnet` |
-| `STELLAR_HORIZON_URL` | Horizon endpoint |
-| `WEBHOOK_SIGNING_SECRET` | HMAC secret for test webhook payloads |
-| `NEXT_PUBLIC_API_URL` | Frontend → API URL (dev: `http://localhost:3001/api`) |
+| Variable | Description | Default / Example |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:password@localhost:5432/savitools` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
+| `STELLAR_NETWORK` | Stellar network (`testnet` or `public`) | `testnet` |
+| `STELLAR_HORIZON_URL` | Horizon API URL | `https://horizon-testnet.stellar.org` |
+| `STELLAR_RPC_URL` | Soroban RPC URL | `https://soroban-rpc-testnet.stellar.org` |
+| `DEPLOYER_SECRET_KEY` | Private key to deploy smart contracts (needs funding) | (Required for deployer tool) |
+| `WEB_ORIGIN` | Allowed origin for API and WebSocket CORS | `http://localhost:3000` |
+| `THROTTLE_TTL` | Rate limiting sliding window size in milliseconds | `60000` (1 minute) |
+| `THROTTLE_LIMIT` | Max requests allowed in the rate limit window | `100` |
+| `WEBHOOK_SIGNING_SECRET` | HMAC secret to sign test webhook payloads | `your-signing-secret-here` |
+| `NEXT_PUBLIC_API_URL` | Frontend → API URL | `http://localhost:3001/api` |
+
+### Security & Rate Limiting
+
+SaviTools protects its REST APIs and WebSocket connections by restricting allowed origins and rate limiting requests:
+- **CORS Protection**: The WebSocket gateway and HTTP endpoints restrict incoming connections using `WEB_ORIGIN` (defaulting to `http://localhost:3000`). Make sure this is set to your frontend origin in staging/production deployments.
+- **Rate Limiting**: SaviTools implements global rate limiting using `@nestjs/throttler`. By default, it allows a maximum of `100` requests within a `60000` ms (1 minute) sliding window per IP address. When exceeded, the API returns a `429 Too Many Requests` response.
+  - Rate limits can be configured in your environment using `THROTTLE_LIMIT` (number of requests) and `THROTTLE_TTL` (time-to-live window in milliseconds).
 
 ### 3. Start infrastructure
 
