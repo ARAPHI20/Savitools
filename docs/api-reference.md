@@ -1293,7 +1293,7 @@ SaviTools proxies some errors directly from the Stellar Horizon API. These error
 }
 ```
 
-For a complete list, refer to the [Stellar Horizon API documentation](https://developers.stellar.org/api/errors/).
+For a complete list, refer to the [Stellar Horizon API documentation](http://web.archive.org/web/20210613121751/https://developers.stellar.org/api/errors/).
 
 ---
 
