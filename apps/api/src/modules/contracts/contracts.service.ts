@@ -29,7 +29,12 @@ export class ContractsService {
     const secretKey = this.configService.getOrThrow<string>('DEPLOYER_SECRET_KEY');
     this.deployer = Keypair.fromSecret(secretKey);
 
-    this.networkPassphrase = Networks.TESTNET;
+    const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
+    this.networkPassphrase =
+      this.configService.get<string>('STELLAR_NETWORK_PASSPHRASE') ||
+      (network.toLowerCase() === 'mainnet' || network.toLowerCase() === 'public'
+        ? Networks.PUBLIC
+        : Networks.TESTNET);
   }
 
   async deploy(
@@ -209,7 +214,7 @@ export class ContractsService {
     return {
       contractId,
       wasmHash: wasmHashHex,
-      network: 'testnet',
+      network: this.configService.get<string>('STELLAR_NETWORK', 'testnet'),
     };
   }
 }
