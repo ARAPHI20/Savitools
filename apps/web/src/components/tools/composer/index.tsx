@@ -16,6 +16,13 @@ import { OperationPalette } from './operation-palette';
 import { SignSubmitDialog } from './sign-submit-dialog';
 import { SimulateResult } from './simulate-result';
 import { XdrPreview } from './xdr-preview';
+import {
+  ErrorState,
+} from '../state-display';
+import {
+  ComposerOperationListSkeleton,
+  ComposerSimulateSkeleton,
+} from '../state-display';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,6 +80,7 @@ export function ComposerTool() {
   // Remote manifest
   const [manifest, setManifest] = useState<OperationManifestEntry[]>([]);
   const [manifestLoading, setManifestLoading] = useState(true);
+  const [manifestError, setManifestError] = useState<string | null>(null);
 
   // Composer state
   const [sourceAccount, setSourceAccount] = useState('');
@@ -102,14 +110,24 @@ export function ComposerTool() {
   // ---------------------------------------------------------------------------
   // Load manifest once
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    fetchOperations()
-      .then(setManifest)
-      .catch(() => {
-        // Fallback: manifest still loads but is empty — user sees empty palette
-      })
-      .finally(() => setManifestLoading(false));
+  const loadManifest = useCallback(async () => {
+    setManifestLoading(true);
+    setManifestError(null);
+    try {
+      const data = await fetchOperations();
+      setManifest(data);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load operation manifest';
+      setManifestError(message);
+      setManifest([]);
+    } finally {
+      setManifestLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadManifest();
+  }, [loadManifest]);
 
   // ---------------------------------------------------------------------------
   // Auto-build XDR whenever ops / source / memo / network change
@@ -246,11 +264,15 @@ export function ComposerTool() {
         {/* Left — palette */}
         <div className="rounded-xl border border-border/60 bg-card/30 p-3 overflow-hidden">
           {manifestLoading ? (
-            <div className="flex flex-col gap-2">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="h-9 rounded-lg bg-card/60 animate-pulse" />
-              ))}
-            </div>
+            <ComposerOperationListSkeleton />
+          ) : manifestError ? (
+            <ErrorState
+              title="Failed to load operations"
+              message={manifestError}
+              onRetry={loadManifest}
+              retryLabel="Reload manifest"
+              details={manifestError}
+            />
           ) : (
             <OperationPalette operations={manifest} onAdd={handleAdd} />
           )}
@@ -284,7 +306,12 @@ export function ComposerTool() {
       <XdrPreview xdr={xdr} loading={xdrBuilding} />
 
       {/* Simulate result */}
-      <SimulateResult result={simResult} loading={simLoading} error={simError} />
+      <SimulateResult
+        result={simResult}
+        loading={simLoading}
+        error={simError}
+        onRetry={handleSimulate}
+      />
 
       {/* Sign & Submit dialog */}
       {showSignDialog && xdr && (

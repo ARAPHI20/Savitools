@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Keypair } from '@stellar/stellar-sdk';
 import {
-  Wallet,
   Plus,
   Copy,
   Check,
@@ -13,9 +12,7 @@ import {
   Loader2,
   AlertTriangle,
   ExternalLink,
-  RefreshCw,
   Search,
-  X,
 } from 'lucide-react';
 import {
   sandboxFund,
@@ -27,6 +24,12 @@ import {
   type Balance,
 } from '@/lib/api';
 import { useNetwork } from '@/lib/network-context';
+import {
+  SandboxAccountSkeleton,
+  ErrorState,
+  SandboxEmptyAccountState,
+  SandboxPaymentEmptyState,
+} from './state-display';
 
 interface GeneratedKeypair {
   publicKey: string;
@@ -357,13 +360,17 @@ export function SandboxTool() {
           </button>
         </div>
 
-        {inspector.error && (
-          <div className="rounded-md bg-red-500/10 border border-red-500/30 p-2">
-            <p className="text-xs text-red-700">{inspector.error}</p>
-          </div>
-        )}
-
-        {inspector.account && (
+        {inspector.loading ? (
+          <SandboxAccountSkeleton />
+        ) : inspector.error ? (
+          <ErrorState
+            title="Account lookup failed"
+            message={inspector.error}
+            onRetry={() => handleInspectAccount(inspector.publicKey)}
+            retryLabel="Retry"
+            details={inspector.error}
+          />
+        ) : inspector.account ? (
           <div className="space-y-3">
             {/* Sequence Number */}
             <div>
@@ -447,6 +454,17 @@ export function SandboxTool() {
               </div>
             </div>
           </div>
+        ) : (
+          <SandboxEmptyAccountState
+            onInspect={() => {
+              if (keypair) {
+                setInspector((prev) => ({ ...prev, publicKey: keypair.publicKey }));
+                handleInspectAccount(keypair.publicKey);
+              } else {
+                handleGenerateKeypair();
+              }
+            }}
+          />
         )}
       </div>
 
@@ -546,13 +564,15 @@ export function SandboxTool() {
             )}
           </button>
 
-          {paymentError && (
-            <div className="rounded-md bg-red-500/10 border border-red-500/30 p-2">
-              <p className="text-xs text-red-700">{paymentError}</p>
-            </div>
-          )}
-
-          {paymentResult && (
+          {paymentError ? (
+            <ErrorState
+              title="Payment failed"
+              message={paymentError}
+              onRetry={handleSendPayment}
+              retryLabel="Resend payment"
+              details={paymentError}
+            />
+          ) : paymentResult ? (
             <div className="rounded-md bg-green-500/10 border border-green-500/30 p-2 space-y-1">
               <p className="text-xs text-green-700">
                 <strong>Payment successful!</strong>
@@ -575,6 +595,8 @@ export function SandboxTool() {
                 View on Stellar Expert <ExternalLink className="h-3 w-3" />
               </a>
             </div>
+          ) : (
+            <SandboxPaymentEmptyState />
           )}
         </div>
       </div>

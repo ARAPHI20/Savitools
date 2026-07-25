@@ -2,33 +2,35 @@
 
 import { SimulateTransactionResult } from '@/lib/composer-api';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { ComposerSimulateSkeleton, ComposerEmptySimulateState, ErrorState } from '../state-display';
 
 interface SimulateResultProps {
   result: SimulateTransactionResult | null;
   loading: boolean;
   error: string | null;
+  onRetry?: () => void;
 }
 
-export function SimulateResult({ result, loading, error }: SimulateResultProps) {
+export function SimulateResult({ result, loading, error, onRetry }: SimulateResultProps) {
   if (loading) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-border/60 bg-card/40">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />
-        <span className="text-xs text-muted-foreground">Simulating on Horizon…</span>
-      </div>
-    );
+    return <ComposerSimulateSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-rose-500/30 bg-rose-500/5">
-        <AlertTriangle className="h-3.5 w-3.5 text-rose-400 mt-0.5 shrink-0" />
-        <p className="text-xs text-rose-300">{error}</p>
-      </div>
+      <ErrorState
+        title="Simulation failed"
+        message={error}
+        onRetry={onRetry}
+        retryLabel="Retry simulation"
+        details={error}
+      />
     );
   }
 
-  if (!result) return null;
+  if (!result) {
+    return <ComposerEmptySimulateState />;
+  }
 
   return (
     <div

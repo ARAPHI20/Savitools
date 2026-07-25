@@ -4,6 +4,7 @@ import { ComposedOperation } from './index';
 import { OP_COLORS, OP_ICONS } from './operation-palette';
 import { GripVertical, Trash2 } from 'lucide-react';
 import { DragDropContext, Draggable, Droppable, DropResult } from '@hello-pangea/dnd';
+import { ComposerEmptyOpsState } from '../state-display';
 
 interface OperationListProps {
   operations: ComposedOperation[];
@@ -29,13 +30,7 @@ export function OperationList({
   };
 
   if (operations.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-48 rounded-xl border border-dashed border-border/60 text-center px-4">
-        <p className="text-xs text-muted-foreground">
-          Click an operation type on the left to add it here
-        </p>
-      </div>
-    );
+    return <ComposerEmptyOpsState />;
   }
 
   return (
