@@ -11,7 +11,14 @@ import { ACCESS_TOKEN_COOKIE } from '../auth/auth.constants';
 
 @WebSocketGateway({
   cors: {
-    origin: true,
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      const allowedOrigin = process.env.WEB_ORIGIN || 'http://localhost:3000';
+      if (!origin || origin === allowedOrigin) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
   },
 })

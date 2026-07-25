@@ -62,9 +62,8 @@ Read the full issue body before writing code. Every issue has an acceptance crit
 SaviTools is a Turborepo monorepo with two main directories:
 
 - `apps/` — Contains applications that run independently.
-  - `apps/api` — NestJS backend; one module per tool (e.g. `modules/transaction/`, `modules/wallet/`). Each module has a controller, service, and module file. Business logic lives in the service.
+  - `apps/api` — NestJS backend; one module per tool (e.g. `modules/inspector/`, `modules/wallet/`). Each module has a controller, service, and module file. Business logic lives in the service.
   - `apps/web` — Next.js 15 App Router frontend; one route folder per tool (e.g. `app/inspector/`, `app/sandbox/`).
-- `packages/` — Contains shared libraries and configuration packages used across apps.
 
 Most issues touch one module in the API and one page in the web app. Read both the existing service stub and the page stub before making any changes — they usually have comments indicating what needs to be implemented.
 
@@ -99,7 +98,7 @@ The acceptance criteria are written to be directly checked against. Include the 
 **3. Show it an existing complete module as reference**
 
 ```
-The transaction module at apps/api/src/modules/transaction/ is the most complete
+The inspector module at apps/api/src/modules/inspector/ is the most complete
 reference implementation. Follow the same service/controller/module structure
 for the new module.
 ```

@@ -302,32 +302,52 @@ Once submitted, check the transaction status:
 ```bash
 TX_HASH="5fa1f6d8a7c9b2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 
-curl "http://localhost:3001/api/v1/transactions/$TX_HASH"
+curl "http://localhost:3001/api/v1/inspector/tx/$TX_HASH"
 ```
 
 **Expected Response:**
 ```json
 {
-  "id": "5fa1f6d8a7c9b2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
-  "source_account": "GBZR7WLLV5OZVUQ4WAWCKVCOVWGZFZVHG5GMRFYVZJZ2AFSGHFKDQ4C",
-  "fee_charged": 100,
-  "successful": true,
-  "created_at": "2024-06-21T12:34:56Z",
+  "hash": "5fa1f6d8a7c9b2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+  "ledger": 12345,
+  "createdAt": "2024-06-21T12:34:56Z",
+  "sourceAccount": "GBZR7WLLV5OZVUQ4WAWCKVCOVWGZFZVHG5GMRFYVZJZ2AFSGHFKDQ4C",
+  "sequenceNumber": "1",
+  "feeCharged": "100",
+  "maxFee": "100",
+  "memo": null,
+  "memoType": "none",
+  "timeBounds": null,
+  "signatures": ["..."],
+  "success": true,
+  "resultCode": "tx_success",
+  "resultExplanation": "The transaction was code-path complete and succeeded.",
+  "operationCount": 1,
   "operations": [
     {
       "type": "payment",
-      "destination": "GBUQWPFZ2AEFL3YZWP7CLBX6FAUYGMJC52YTKF4KIWNDWVXMXWBP2C5",
-      "amount": "5.0000000",
-      "asset_type": "native"
+      "fields": {
+        "destination": "GBUQWPFZ2AEFL3YZWP7CLBX6FAUYGMJC52YTKF4KIWNDWVXMXWBP2C5",
+        "amount": "5.00",
+        "asset": "XLM"
+      },
+      "index": 0,
+      "resultCode": "op_success",
+      "resultExplanation": "The payment operation succeeded.",
+      "success": true,
+      "effects": []
     }
-  ]
+  ],
+  "rawJson": {},
+  "network": "testnet",
+  "composerPayload": {}
 }
 ```
 
 **Verify:**
-- `"successful": true` ✅ Payment was confirmed
-- `"fee_charged": 100` ✅ Correct fee deducted
-- `"operations[0].amount": "5.0000000"` ✅ Correct amount sent
+- `"success": true` ✅ Payment was confirmed
+- `"feeCharged": "100"` ✅ Correct fee deducted
+- `"operations[0].fields.amount": "5.00"` ✅ Correct amount sent
 
 ---
 

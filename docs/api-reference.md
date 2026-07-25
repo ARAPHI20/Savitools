@@ -623,38 +623,150 @@ curl -X POST http://localhost:3001/api/v1/composer/simulate \
 
 ---
 
-### Transactions
+### Inspector (Transaction & XDR Inspection)
 
-#### GET `/transactions/:hash`
+#### GET `/inspector/tx/:hash`
 
-Decode and inspect a Stellar transaction by hash.
+Fetch, decode, and inspect a Stellar transaction by hash.
+
+**Query Parameters:**
+- `network` (optional, default `testnet`): `testnet` or `mainnet`
 
 **Request:**
 ```bash
-curl http://localhost:3001/api/v1/transactions/5fa1f6d8a7c...
+curl "http://localhost:3001/api/v1/inspector/tx/5fa1f6d8a7c..."
 ```
 
 **Response (200):**
 ```json
 {
-  "id": "5fa1f6d8a7c...",
-  "source_account": "GBZR7...",
-  "fee_charged": 300,
-  "successful": true,
-  "created_at": "2024-06-21T12:34:56Z",
+  "hash": "5fa1f6d8a7c...",
+  "ledger": 12345,
+  "createdAt": "2024-06-21T12:34:56Z",
+  "sourceAccount": "GBZR7...",
+  "sequenceNumber": "1234567890",
+  "feeCharged": "300",
+  "maxFee": "300",
+  "memo": null,
+  "memoType": "none",
+  "timeBounds": null,
+  "signatures": ["..."],
+  "success": true,
+  "resultCode": "tx_success",
+  "resultExplanation": "The transaction was code-path complete and succeeded.",
+  "operationCount": 1,
   "operations": [
     {
       "type": "payment",
-      "destination": "GBUQWP...",
-      "amount": "10.0000000",
-      "asset_type": "native"
+      "fields": {
+        "destination": "GBUQWP...",
+        "amount": "10.00",
+        "asset": "XLM"
+      },
+      "index": 0,
+      "resultCode": "op_success",
+      "resultExplanation": "The payment operation succeeded.",
+      "success": true,
+      "effects": []
     }
-  ]
+  ],
+  "rawJson": {},
+  "network": "testnet",
+  "composerPayload": {}
 }
 ```
 
 **Errors:**
 - `404`: Transaction not found
+
+---
+
+#### GET `/inspector/account/:publicKey/txs`
+
+Get the last 20 transactions for a Stellar account.
+
+**Query Parameters:**
+- `network` (optional, default `testnet`): `testnet` or `mainnet`
+
+**Request:**
+```bash
+curl "http://localhost:3001/api/v1/inspector/account/GBZR7.../txs"
+```
+
+**Response (200):**
+```json
+[
+  {
+    "hash": "5fa1f6d8a7c...",
+    "createdAt": "2024-06-21T12:34:56Z",
+    "operationCount": 1,
+    "feeCharged": "300",
+    "success": true,
+    "resultCode": "tx_success"
+  }
+]
+```
+
+**Errors:**
+- `404`: Account not found
+
+---
+
+#### POST `/inspector/decode-xdr`
+
+Decode raw Stellar XDR envelope (offline, no Horizon network call required).
+
+**Request:**
+```bash
+curl -X POST http://localhost:3001/api/v1/inspector/decode-xdr \
+  -H "Content-Type: application/json" \
+  -d '{
+    "xdr": "AAAAAgAAAAB+Ht3sW...",
+    "network": "testnet"
+  }'
+```
+
+**Response (200):**
+```json
+{
+  "hash": "5fa1f6d8a7c...",
+  "ledger": 0,
+  "createdAt": "",
+  "sourceAccount": "GBZR7...",
+  "sequenceNumber": "1234567890",
+  "feeCharged": "0",
+  "maxFee": "300",
+  "memo": null,
+  "memoType": "none",
+  "timeBounds": null,
+  "signatures": ["..."],
+  "success": true,
+  "resultCode": "tx_success",
+  "resultExplanation": "Transaction decoded from XDR — not yet submitted.",
+  "operationCount": 1,
+  "operations": [
+    {
+      "type": "payment",
+      "fields": {
+        "destination": "GBUQWP...",
+        "amount": "10.00",
+        "asset": "XLM"
+      },
+      "index": 0,
+      "resultCode": null,
+      "resultExplanation": null,
+      "success": true,
+      "effects": []
+    }
+  ],
+  "rawJson": null,
+  "network": "testnet",
+  "composerPayload": {}
+}
+```
+
+**Errors:**
+- `400`: Invalid XDR
 
 ---
 
