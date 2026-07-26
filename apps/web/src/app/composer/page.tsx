@@ -1,6 +1,7 @@
 import { SiteHeader } from '@/components/layout/site-header';
 import { ComposerTool } from '@/components/tools/other-tools';
 import { ToolPageShell } from '@/components/tools/tool-page-shell';
+import { ErrorBoundary } from '@/components/tools/error-boundary';
 
 export default function ComposerPage() {
   return (
@@ -10,7 +11,9 @@ export default function ComposerPage() {
         title="Transaction Composer"
         description="Visual builder for multi-operation Stellar transactions."
       >
-        <ComposerTool />
+        <ErrorBoundary toolName="Composer">
+          <ComposerTool />
+        </ErrorBoundary>
       </ToolPageShell>
     </>
   );

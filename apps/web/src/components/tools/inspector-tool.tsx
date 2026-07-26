@@ -25,7 +25,12 @@ import {
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ToolEmptyState } from './tool-empty-state';
+import {
+  InspectorSkeleton,
+  ErrorState,
+  InspectorEmptyState,
+  InspectorAccountEmptyState,
+} from './state-display';
 
 // ─── Input type detection ─────────────────────────────────────────────────
 
@@ -432,35 +437,35 @@ export function InspectorTool() {
       )}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-4 mb-6 text-sm text-red-400">
-          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-          {error}
-        </div>
-      )}
-
-      {!loading && !error && !txData && !accountTxs && (
-        <ToolEmptyState
-          message="Paste a transaction hash, Stellar address, or raw XDR to get a full human-readable breakdown."
-          exampleLabel="Try example transaction"
-          onExample={loadExample}
+        <ErrorState
+          title="Inspection failed"
+          message={error}
+          onRetry={() => runInspect(input)}
+          retryLabel="Retry lookup"
+          secondaryAction={{
+            label: 'Use example',
+            onClick: loadExample,
+          }}
+          details={error}
         />
       )}
 
-      {loading && (
-        <div className="flex items-center justify-center py-24 text-muted-foreground gap-3">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">
-            {inputType === 'address' ? 'Loading account transactions…' : 'Fetching and decoding transaction…'}
-          </span>
-        </div>
+      {!loading && !error && !txData && !accountTxs && (
+        <InspectorEmptyState onExample={loadExample} />
       )}
+
+      {loading && <InspectorSkeleton />}
 
       {txData && !loading && (
         <TxBreakdown data={txData} onInspectInComposer={handleInspectInComposer} />
       )}
 
       {accountTxs && !loading && (
-        <AccountTimeline txs={accountTxs} onSelect={handleAccountTxSelect} />
+        accountTxs.length > 0 ? (
+          <AccountTimeline txs={accountTxs} onSelect={handleAccountTxSelect} />
+        ) : (
+          <InspectorAccountEmptyState address={input.trim()} onExample={loadExample} />
+        )
       )}
     </div>
   );

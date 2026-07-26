@@ -1,6 +1,5 @@
 'use client';
 
-import { ToolEmptyState } from '@/components/tools/tool-empty-state';
 import { useExampleOnboarding } from '@/hooks/use-example-onboarding';
 import { EXAMPLE_USDC_ISSUER } from '@/lib/examples';
 import {
@@ -10,9 +9,15 @@ import {
   type SimulatedPath,
   type AssetType,
 } from '@/lib/api';
-import { ArrowRight, ExternalLink, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  SimulatorPathSkeleton,
+  ErrorState,
+  SimulatorEmptyState,
+  SimulatorNoPathsState,
+} from './state-display';
 
 function AssetPicker({
   label,
@@ -208,25 +213,15 @@ function PathCard({
   );
 }
 
-function NoResultsState({ direction }: { direction: Direction }) {
+function NoResultsState({
+  direction,
+  onRetry,
+}: {
+  direction: Direction;
+  onRetry: () => void;
+}) {
   return (
-    <div className="rounded-lg border border-dashed border-border bg-muted/20 px-6 py-12 text-center">
-      <AlertCircle className="h-8 w-8 text-muted-foreground mx-auto mb-4" />
-      <p className="text-sm font-medium mb-2">No paths found</p>
-      <div className="text-xs text-muted-foreground space-y-1 max-w-md mx-auto">
-        <p>
-          Stellar could not find a {direction === 'strict_send' ? 'strict send' : 'strict receive'} route
-          for this asset pair.
-        </p>
-        <p>Possible reasons:</p>
-        <ul className="list-disc list-inside text-left inline-block mt-1">
-          <li>The pair is illiquid — no order book or pool connects these assets</li>
-          <li>The issuer address is incorrect or does not exist on this network</li>
-          <li>The amount is too large for available liquidity</li>
-          <li>The source and destination assets are the same</li>
-        </ul>
-      </div>
-    </div>
+    <SimulatorNoPathsState direction={direction} onRetry={onRetry} />
   );
 }
 
@@ -473,20 +468,22 @@ export function SimulatorTool() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 flex items-start gap-3">
-          <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-red-600">Error finding paths</p>
-            <p className="text-xs text-red-500/80 mt-1">{error}</p>
-          </div>
-        </div>
+        <ErrorState
+          title="Error finding paths"
+          message={error}
+          onRetry={handleFindPaths}
+          retryLabel="Retry search"
+          details={error}
+        />
       )}
 
       {/* Results */}
-      {hasSearched && !loading && !error && (
+      {loading ? (
+        <SimulatorPathSkeleton />
+      ) : hasSearched && !error ? (
         <div className="space-y-3">
           {paths.length === 0 ? (
-            <NoResultsState direction={direction} />
+            <NoResultsState direction={direction} onRetry={handleFindPaths} />
           ) : (
             <>
               <p className="text-sm text-muted-foreground">
@@ -504,15 +501,11 @@ export function SimulatorTool() {
             </>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Empty state */}
       {!hasSearched && !loading && !error && (
-        <ToolEmptyState
-          message="Enter source and destination assets to find payment routes across the Stellar DEX"
-          exampleLabel="Try XLM → USDC"
-          onExample={loadExample}
-        />
+        <SimulatorEmptyState onExample={loadExample} />
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDownLeft,
@@ -9,9 +9,16 @@ import {
   FileCode2,
   Pause,
   Play,
+  RefreshCw,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Paginated, Watch, WatchEvent } from './monitor-types';
+import {
+  MonitorFeedSkeleton,
+  MonitorNoWatchSelectedState,
+  MonitorNoEventsState,
+  ErrorState,
+} from '../tools/state-display';
 
 export function LiveFeed({
   watch,
@@ -21,18 +28,36 @@ export function LiveFeed({
   liveEvents: WatchEvent[];
 }) {
   const [history, setHistory] = useState<WatchEvent[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  const loadHistory = useCallback(async (watchId: string) => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const page = await apiFetch<Paginated<WatchEvent>>(
+        `/monitor/watches/${watchId}/events?limit=100`,
+      );
+      setHistory(page.items);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load event history';
+      setHistoryError(message);
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!watch) {
       setHistory([]);
+      setHistoryError(null);
       return;
     }
-    void apiFetch<Paginated<WatchEvent>>(
-      `/monitor/watches/${watch.id}/events?limit=100`,
-    ).then((page) => setHistory(page.items));
-  }, [watch]);
+    void loadHistory(watch.id);
+  }, [watch, loadHistory]);
 
   const events = useMemo(() => {
     const byId = new Map<string, WatchEvent>();
@@ -51,17 +76,7 @@ export function LiveFeed({
   }, [events.length, paused]);
 
   if (!watch) {
-    return (
-      <div className="flex h-full items-center justify-center p-8 text-center">
-        <div>
-          <Activity className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-          <h3 className="font-medium">Select a watch</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Live ledger activity and saved history will appear here.
-          </p>
-        </div>
-      </div>
-    );
+    return <MonitorNoWatchSelectedState />;
   }
 
   return (
@@ -83,31 +98,56 @@ export function LiveFeed({
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setPaused((current) => !current)}
-          className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
-        >
-          {paused ? (
-            <Play className="h-3.5 w-3.5" />
-          ) : (
-            <Pause className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          {historyError && (
+            <button
+              type="button"
+              onClick={() => loadHistory(watch.id)}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="Reload history"
+            >
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              Retry
+            </button>
           )}
-          {paused ? 'Resume scroll' : 'Pause scroll'}
-        </button>
+          <button
+            type="button"
+            onClick={() => setPaused((current) => !current)}
+            className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
+          >
+            {paused ? (
+              <Play className="h-3.5 w-3.5" />
+            ) : (
+              <Pause className="h-3.5 w-3.5" />
+            )}
+            {paused ? 'Resume scroll' : 'Pause scroll'}
+          </button>
+        </div>
       </header>
 
       <div
         ref={feedRef}
         className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4"
       >
-        {events.map((event) => (
-          <EventCard key={event.id} event={event} watch={watch} />
-        ))}
-        {events.length === 0 && (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Listening for {watch.eventTypes.join(' and ')} events...
-          </div>
+        {historyLoading ? (
+          <MonitorFeedSkeleton />
+        ) : historyError ? (
+          <ErrorState
+            title="Failed to load event history"
+            message={historyError}
+            onRetry={() => loadHistory(watch.id)}
+            retryLabel="Reload history"
+            details={historyError}
+          />
+        ) : events.length > 0 ? (
+          events.map((event) => (
+            <EventCard key={event.id} event={event} watch={watch} />
+          ))
+        ) : (
+          <MonitorNoEventsState
+            watchLabel={watch.label || watch.publicKey.slice(0, 8) + '…' + watch.publicKey.slice(-6)}
+            eventTypes={watch.eventTypes}
+          />
         )}
       </div>
     </section>
