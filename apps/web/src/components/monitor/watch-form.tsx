@@ -16,6 +16,7 @@ interface DraftRule {
   type: AlertRuleType;
   asset: string;
   threshold: string;
+  windowMinutes: string;
   channels: NotificationChannel[];
 }
 
@@ -79,7 +80,12 @@ export function WatchForm({
           eventTypes: isContract
             ? ['contract']
             : eventTypes.filter((type) => type !== 'contract'),
-          alertRules: rules.map(({ id: _id, ...rule }) => rule),
+          alertRules: rules.map(({ id: _id, windowMinutes, ...rule }) => ({
+            ...rule,
+            ...(rule.type === 'transaction_count' && windowMinutes
+              ? { windowMinutes: Number(windowMinutes) }
+              : {}),
+          })),
         }),
       });
       onAdd(watch);
@@ -131,6 +137,7 @@ export function WatchForm({
                         type: 'any_activity',
                         asset: '',
                         threshold: '',
+                        windowMinutes: '',
                       })),
                     );
                   }
@@ -216,6 +223,7 @@ export function WatchForm({
                       type: 'any_activity',
                       asset: '',
                       threshold: '',
+                      windowMinutes: '',
                       channels: ['in_app'],
                     },
                   ])
@@ -282,8 +290,14 @@ function RuleEditor({
   onChange: (rule: DraftRule) => void;
   onDelete: () => void;
 }) {
+  const isCount = rule.type === 'transaction_count';
+  const isBalance =
+    rule.type === 'balance_above' || rule.type === 'balance_below';
   const needsThreshold =
-    rule.type === 'amount_received_gte' || rule.type === 'amount_sent_gte';
+    isCount ||
+    isBalance ||
+    rule.type === 'amount_received_gte' ||
+    rule.type === 'amount_sent_gte';
   const needsAsset = rule.type === 'asset_received';
   return (
     <div className="space-y-3 rounded-md border border-border bg-background p-3">
@@ -306,6 +320,11 @@ function RuleEditor({
           )}
           {!contract && <option value="asset_received">Asset received</option>}
           {!contract && <option value="tx_failed">Transaction failed</option>}
+          {!contract && <option value="balance_above">Balance above</option>}
+          {!contract && <option value="balance_below">Balance below</option>}
+          {!contract && (
+            <option value="transaction_count">Transaction count reaches</option>
+          )}
         </select>
         <button type="button" onClick={onDelete} aria-label="Remove rule">
           <Trash2 className="h-4 w-4 text-muted-foreground" />
@@ -317,10 +336,29 @@ function RuleEditor({
           onChange={(event) =>
             onChange({ ...rule, threshold: event.target.value })
           }
-          placeholder="Threshold amount"
-          inputMode="decimal"
+          placeholder={isCount ? 'Transaction count' : 'Threshold amount'}
+          inputMode={isCount ? 'numeric' : 'decimal'}
           className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
           required
+        />
+      )}
+      {isCount && (
+        <input
+          value={rule.windowMinutes}
+          onChange={(event) =>
+            onChange({ ...rule, windowMinutes: event.target.value })
+          }
+          placeholder="Window in minutes (default 60)"
+          inputMode="numeric"
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+        />
+      )}
+      {isBalance && (
+        <input
+          value={rule.asset}
+          onChange={(event) => onChange({ ...rule, asset: event.target.value })}
+          placeholder="Asset, defaults to XLM"
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
         />
       )}
       {needsAsset && (
