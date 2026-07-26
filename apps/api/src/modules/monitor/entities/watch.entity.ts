@@ -11,6 +11,7 @@ import {
 import { User } from '../../auth/entities/user.entity';
 import {
   AlertRuleDefinition,
+  AlertRuleState,
   StellarNetwork,
   StreamMode,
   StreamStatus,
@@ -52,6 +53,12 @@ export class Watch {
 
   @Column({ name: 'alert_rules', type: 'jsonb', default: () => "'[]'::jsonb" })
   alertRules!: AlertRuleDefinition[];
+
+  @Column({ name: 'alert_state', type: 'jsonb', default: () => "'{}'::jsonb" })
+  alertState!: AlertRuleState;
+
+  @Column({ name: 'last_evaluated_at', type: 'timestamptz', nullable: true })
+  lastEvaluatedAt!: Date | null;
 
   @Column({ name: 'transaction_cursor', type: 'varchar', nullable: true })
   transactionCursor!: string | null;

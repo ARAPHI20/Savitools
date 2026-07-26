@@ -3,9 +3,12 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import {
@@ -31,6 +34,12 @@ export class AlertRuleDto {
   @IsString()
   @MaxLength(64)
   threshold?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(43200)
+  windowMinutes?: number;
 
   @IsOptional()
   @IsArray()

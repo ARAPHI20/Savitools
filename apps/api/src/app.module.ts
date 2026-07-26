@@ -18,6 +18,7 @@ import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
 import { CreateLedgerMonitor1752926400000 } from './database/migrations/1752926400000-create-ledger-monitor';
+import { AddMonitorStateAlerts1785312000000 } from './database/migrations/1785312000000-add-monitor-state-alerts';
 
 @Module({
   imports: [
@@ -40,7 +41,10 @@ import { CreateLedgerMonitor1752926400000 } from './database/migrations/17529264
         url: config.get<string>('DATABASE_URL'),
         autoLoadEntities: true,
         synchronize: config.get<string>('NODE_ENV') !== 'production',
-        migrations: [CreateLedgerMonitor1752926400000],
+        migrations: [
+          CreateLedgerMonitor1752926400000,
+          AddMonitorStateAlerts1785312000000,
+        ],
         migrationsRun: config.get<string>('RUN_MIGRATIONS') === 'true',
         logging: config.get<string>('NODE_ENV') === 'development',
       }),
