@@ -5,6 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import { Repository } from 'typeorm';
 import { Watch } from './entities/watch.entity';
 import { EventIngestionService } from './event-ingestion.service';
+import { horizonServer, rpcServer } from './horizon';
 import {
   EventSource,
   NormalizedMonitorEvent,
@@ -503,31 +504,11 @@ export class StreamManager implements OnApplicationShutdown {
   }
 
   private horizonServer(network: StellarNetwork): StellarSdk.Horizon.Server {
-    const url =
-      network === 'public'
-        ? this.configService.get<string>(
-            'STELLAR_HORIZON_PUBLIC_URL',
-            'https://horizon.stellar.org',
-          )
-        : this.configService.get<string>(
-            'STELLAR_HORIZON_URL',
-            'https://horizon-testnet.stellar.org',
-          );
-    return new StellarSdk.Horizon.Server(url);
+    return horizonServer(this.configService, network);
   }
 
   private rpcServer(network: StellarNetwork): StellarSdk.rpc.Server {
-    const url =
-      network === 'public'
-        ? this.configService.get<string>(
-            'STELLAR_RPC_PUBLIC_URL',
-            'https://mainnet.sorobanrpc.com',
-          )
-        : this.configService.get<string>(
-            'STELLAR_RPC_URL',
-            'https://soroban-testnet.stellar.org',
-          );
-    return new StellarSdk.rpc.Server(url);
+    return rpcServer(this.configService, network);
   }
 
   private jsonRecord(value: Record<string, unknown>): Record<string, unknown> {

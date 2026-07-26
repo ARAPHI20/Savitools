@@ -13,6 +13,7 @@ import { EventIngestionService } from './event-ingestion.service';
 import { AlertEvaluator } from './alert-evaluator.service';
 import { MonitorQueueService } from './monitor-queue.service';
 import { NotificationWorkerService } from './notification-worker.service';
+import { StateEvaluationService } from './state-evaluation.service';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../auth/entities/user.entity';
 
@@ -37,6 +38,7 @@ import { User } from '../auth/entities/user.entity';
     AlertEvaluator,
     MonitorQueueService,
     NotificationWorkerService,
+    StateEvaluationService,
   ],
   exports: [MonitorService],
 })
