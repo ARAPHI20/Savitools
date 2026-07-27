@@ -65,6 +65,8 @@ export class MonitorService implements OnApplicationBootstrap {
         network: dto.network ?? 'testnet',
         eventTypes: Array.from(new Set(dto.eventTypes)),
         alertRules,
+        alertState: {},
+        lastEvaluatedAt: null,
         transactionCursor: existing?.transactionCursor ?? null,
         paymentCursor: existing?.paymentCursor ?? null,
         contractCursor: existing?.contractCursor ?? null,
@@ -246,7 +248,10 @@ export class MonitorService implements OnApplicationBootstrap {
       );
     }
     if (
-      (dto.type === 'amount_received_gte' || dto.type === 'amount_sent_gte') &&
+      (dto.type === 'amount_received_gte' ||
+        dto.type === 'amount_sent_gte' ||
+        dto.type === 'balance_above' ||
+        dto.type === 'balance_below') &&
       !this.validThreshold(dto.threshold)
     ) {
       throw new BadRequestException(
@@ -255,6 +260,14 @@ export class MonitorService implements OnApplicationBootstrap {
     }
     if (dto.type === 'asset_received' && !dto.asset?.trim()) {
       throw new BadRequestException('asset_received requires an asset');
+    }
+    if (
+      dto.type === 'transaction_count' &&
+      !/^[1-9]\d*$/.test(dto.threshold?.trim() ?? '')
+    ) {
+      throw new BadRequestException(
+        'transaction_count requires a positive whole-number threshold',
+      );
     }
 
     const channels: NotificationChannel[] = dto.channels?.length
@@ -265,6 +278,9 @@ export class MonitorService implements OnApplicationBootstrap {
       type: dto.type,
       ...(dto.asset?.trim() ? { asset: dto.asset.trim() } : {}),
       ...(dto.threshold?.trim() ? { threshold: dto.threshold.trim() } : {}),
+      ...(dto.type === 'transaction_count' && dto.windowMinutes
+        ? { windowMinutes: dto.windowMinutes }
+        : {}),
       channels,
     };
   }

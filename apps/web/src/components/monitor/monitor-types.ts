@@ -4,7 +4,10 @@ export type AlertRuleType =
   | 'amount_sent_gte'
   | 'asset_received'
   | 'tx_failed'
-  | 'any_activity';
+  | 'any_activity'
+  | 'balance_above'
+  | 'balance_below'
+  | 'transaction_count';
 export type NotificationChannel = 'in_app' | 'email' | 'webhook';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'retrying';
 
@@ -13,6 +16,7 @@ export interface AlertRule {
   type: AlertRuleType;
   asset?: string;
   threshold?: string;
+  windowMinutes?: number;
   channels: NotificationChannel[];
 }
 

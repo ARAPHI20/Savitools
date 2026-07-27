@@ -1,6 +1,10 @@
 import { AlertEvaluator } from './alert-evaluator.service';
 import { Watch } from './entities/watch.entity';
-import { AlertRuleDefinition, NormalizedMonitorEvent } from './monitor.types';
+import {
+  AccountStateSnapshot,
+  AlertRuleDefinition,
+  NormalizedMonitorEvent,
+} from './monitor.types';
 
 describe('AlertEvaluator', () => {
   const evaluator = new AlertEvaluator();
@@ -94,6 +98,96 @@ describe('AlertEvaluator', () => {
     expect(evaluator.matches(rule('any_activity'), watch, transaction)).toBe(
       true,
     );
+  });
+
+  it('never fires state rules from a single ledger event', () => {
+    expect(
+      evaluator.matches(
+        rule('balance_above', { threshold: '1' }),
+        watch,
+        payment,
+      ),
+    ).toBe(false);
+  });
+
+  const snapshot = {
+    publicKey: 'GACCOUNT',
+    network: 'testnet',
+    observedAt: new Date().toISOString(),
+    balances: { XLM: '150.5000000', 'USDC:GISSUER': '20.0000000' },
+    transactionCounts: { 60: 12 },
+  } satisfies AccountStateSnapshot;
+
+  it('compares balances against the threshold in both directions', () => {
+    expect(
+      evaluator.matchesState(
+        rule('balance_above', { threshold: '150' }),
+        snapshot,
+      ),
+    ).toBe(true);
+    expect(
+      evaluator.matchesState(
+        rule('balance_above', { threshold: '151' }),
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      evaluator.matchesState(
+        rule('balance_below', { threshold: '151' }),
+        snapshot,
+      ),
+    ).toBe(true);
+    expect(
+      evaluator.matchesState(
+        rule('balance_below', { threshold: '150' }),
+        snapshot,
+      ),
+    ).toBe(false);
+  });
+
+  it('defaults balance rules to XLM and honours an explicit asset', () => {
+    expect(
+      evaluator.matchesState(
+        rule('balance_below', { threshold: '100' }),
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      evaluator.matchesState(
+        rule('balance_below', { threshold: '100', asset: 'USDC:GISSUER' }),
+        snapshot,
+      ),
+    ).toBe(true);
+  });
+
+  it('ignores balance rules for assets the account does not hold', () => {
+    expect(
+      evaluator.matchesState(
+        rule('balance_below', { threshold: '100', asset: 'EURC:GISSUER' }),
+        snapshot,
+      ),
+    ).toBe(false);
+  });
+
+  it('fires transaction-count rules once the window total is reached', () => {
+    expect(
+      evaluator.matchesState(
+        rule('transaction_count', { threshold: '12' }),
+        snapshot,
+      ),
+    ).toBe(true);
+    expect(
+      evaluator.matchesState(
+        rule('transaction_count', { threshold: '13' }),
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      evaluator.matchesState(
+        rule('transaction_count', { threshold: '1', windowMinutes: 15 }),
+        snapshot,
+      ),
+    ).toBe(false);
   });
 });
 

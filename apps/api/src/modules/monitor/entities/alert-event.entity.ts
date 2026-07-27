@@ -27,12 +27,13 @@ export class AlertEvent {
   @JoinColumn({ name: 'watch_id' })
   watch!: Watch;
 
-  @Column({ name: 'watch_event_id' })
-  watchEventId!: string;
+  /** Null for state-based alerts, which are not tied to a ledger event. */
+  @Column({ name: 'watch_event_id', type: 'uuid', nullable: true })
+  watchEventId!: string | null;
 
-  @ManyToOne(() => WatchEvent, { onDelete: 'CASCADE' })
+  @ManyToOne(() => WatchEvent, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'watch_event_id' })
-  watchEvent!: WatchEvent;
+  watchEvent!: WatchEvent | null;
 
   @Column({ name: 'rule_id' })
   ruleId!: string;
