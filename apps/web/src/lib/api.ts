@@ -393,6 +393,53 @@ export async function estimateSlippage(params: EstimateParams) {
   });
 }
 
+/* ─── Order Book ────────────────────────────────────────────────────────── */
+
+export interface OrderbookLevel {
+  price: string;
+  amount: string;
+  cumulativeAmount: string;
+  cumulativePercent: number;
+}
+
+export interface OrderbookResult {
+  selling: string;
+  buying: string;
+  network: NetworkChoice;
+  spread: string;
+  spreadBps: number;
+  midPrice: string;
+  bestBid: string;
+  bestAsk: string;
+  liquidityScore: number;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+  lastUpdated: number;
+}
+
+export interface MidPriceSnapshot {
+  timestamp: number;
+  midPrice: string;
+}
+
+export async function getOrderbook(
+  selling: string,
+  buying: string,
+  network: NetworkChoice = 'testnet',
+) {
+  const params = new URLSearchParams({ selling, buying, network });
+  return apiFetch<OrderbookResult>(`/simulator/orderbook?${params.toString()}`);
+}
+
+export async function getOrderbookHistory(
+  selling: string,
+  buying: string,
+  network: NetworkChoice = 'testnet',
+) {
+  const params = new URLSearchParams({ selling, buying, network });
+  return apiFetch<MidPriceSnapshot[]>(`/simulator/orderbook/history?${params.toString()}`);
+}
+
 /* ─── Webhooks ──────────────────────────────────────────────────────────── */
 
 export interface WebhookTemplate {

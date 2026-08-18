@@ -1,16 +1,21 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags, ApiResponse } from '@nestjs/swagger';
 import { SimulatorService } from './simulator.service';
+import { OrderbookService } from './orderbook.service';
 import { FindPathsDto } from './dto/find-paths.dto';
 import { EstimateDto } from './dto/estimate.dto';
 import { SimulateStrictSendDto } from './dto/strict-send.dto';
 import { SimulateStrictReceiveDto } from './dto/strict-receive.dto';
 import { SimulateFeeQueryDto } from './dto/simulate-fee.dto';
+import { OrderbookQueryDto } from './dto/orderbook.dto';
 
 @ApiTags('simulator')
 @Controller('simulator')
 export class SimulatorController {
-  constructor(private readonly simulatorService: SimulatorService) {}
+  constructor(
+    private readonly simulatorService: SimulatorService,
+    private readonly orderbookService: OrderbookService,
+  ) {}
 
   @Get('paths')
   @ApiOperation({ summary: 'Find payment paths between two assets' })
@@ -83,5 +88,28 @@ export class SimulatorController {
     const operations = query.operations ?? 1;
     const network = query.network ?? 'testnet';
     return this.simulatorService.simulateFee(operations, network);
+  }
+
+  @Get('orderbook')
+  @ApiOperation({ summary: 'Get the live DEX order book, spread, and liquidity score for an asset pair' })
+  @ApiResponse({ status: 200, description: 'Order book retrieved' })
+  @ApiResponse({ status: 400, description: 'Invalid asset or network' })
+  getOrderbook(@Query() query: OrderbookQueryDto) {
+    return this.orderbookService.getOrderbook(
+      query.selling,
+      query.buying,
+      query.network ?? 'testnet',
+    );
+  }
+
+  @Get('orderbook/history')
+  @ApiOperation({ summary: 'Get the last 60 mid-price snapshots for an asset pair' })
+  @ApiResponse({ status: 200, description: 'Mid-price history retrieved' })
+  getOrderbookHistory(@Query() query: OrderbookQueryDto) {
+    return this.orderbookService.getHistory(
+      query.selling,
+      query.buying,
+      query.network ?? 'testnet',
+    );
   }
 }
