@@ -47,4 +47,10 @@ export const tools = [
     description: 'Watch addresses and contracts for live ledger activity.',
     status: 'Planned' as const,
   },
+  {
+    href: '/inspector/federation',
+    label: 'Federation & TOML',
+    description: 'Resolve Stellar federation addresses, inspect stellar.toml files, and check SEP compliance.',
+    status: 'MVP' as const,
+  },
 ] as const;
