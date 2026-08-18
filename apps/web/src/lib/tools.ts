@@ -53,4 +53,10 @@ export const tools = [
     description: 'Resolve Stellar federation addresses, inspect stellar.toml files, and check SEP compliance.',
     status: 'MVP' as const,
   },
+  {
+    href: '/simulator/orderbook',
+    label: 'Order Book',
+    description: 'Live DEX order book, spread analytics, and liquidity depth chart for any asset pair.',
+    status: 'MVP' as const,
+  },
 ] as const;

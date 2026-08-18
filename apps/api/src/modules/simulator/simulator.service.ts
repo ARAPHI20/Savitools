@@ -4,6 +4,7 @@ import { Direction, AssetType, FindPathsDto } from './dto/find-paths.dto';
 import { EstimateDto } from './dto/estimate.dto';
 import { SimulateStrictSendDto } from './dto/strict-send.dto';
 import { SimulateStrictReceiveDto } from './dto/strict-receive.dto';
+import { getHorizonUrl, parseAssetParams, fetchFromHorizon } from './horizon.util';
 
 export interface SimulatedAsset {
   type: 'native' | 'credit_alphanum4' | 'credit_alphanum12';
@@ -315,46 +316,6 @@ export class SimulatorService {
     }
   }
 
-  private readonly horizonUrls: Record<string, string> = {
-    mainnet: 'https://horizon.stellar.org',
-    testnet: 'https://horizon-testnet.stellar.org',
-  };
-
-  private getHorizonUrl(network: string): string {
-    const url = this.horizonUrls[network];
-    if (!url) {
-      throw new BadRequestException(`Invalid network: "${network}". Use "testnet" or "mainnet"`);
-    }
-    return url;
-  }
-
-  private parseAssetParams(assetString: string): { type: string; code?: string; issuer?: string } {
-    if (assetString === 'XLM') {
-      return { type: 'native' };
-    }
-    const parts = assetString.split(':');
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      throw new BadRequestException(
-        `Invalid asset format: "${assetString}". Use "XLM" or "CODE:ISSUER"`,
-      );
-    }
-    const code = parts[0];
-    const issuer = parts[1];
-    const type = code.length <= 4 ? 'credit_alphanum4' : 'credit_alphanum12';
-    return { type, code, issuer };
-  }
-
-  private async fetchFromHorizon(url: string): Promise<any> {
-    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new BadRequestException(
-        `Horizon error (${response.status}): ${body || response.statusText}`,
-      );
-    }
-    return response.json();
-  }
-
   private buildHorizonPathUrl(
     horizonUrl: string,
     mode: 'strict_send' | 'strict_receive',
@@ -366,9 +327,9 @@ export class SimulatorService {
   }
 
   async simulateStrictSend(dto: SimulateStrictSendDto): Promise<StrictSendResult> {
-    const horizonUrl = this.getHorizonUrl(dto.network);
-    const src = this.parseAssetParams(dto.sourceAsset);
-    const dst = this.parseAssetParams(dto.destAsset);
+    const horizonUrl = getHorizonUrl(dto.network);
+    const src = parseAssetParams(dto.sourceAsset);
+    const dst = parseAssetParams(dto.destAsset);
 
     const params: Record<string, string> = {
       source_asset_type: src.type,
@@ -383,7 +344,7 @@ export class SimulatorService {
     let json: { _embedded?: { records?: HorizonPathRecord[] } };
     try {
       const url = this.buildHorizonPathUrl(horizonUrl, 'strict_send', params);
-      json = await this.fetchFromHorizon(url);
+      json = await fetchFromHorizon(url);
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -438,9 +399,9 @@ export class SimulatorService {
   }
 
   async simulateStrictReceive(dto: SimulateStrictReceiveDto): Promise<StrictReceiveResult> {
-    const horizonUrl = this.getHorizonUrl(dto.network);
-    const src = this.parseAssetParams(dto.sourceAsset);
-    const dst = this.parseAssetParams(dto.destAsset);
+    const horizonUrl = getHorizonUrl(dto.network);
+    const src = parseAssetParams(dto.sourceAsset);
+    const dst = parseAssetParams(dto.destAsset);
 
     const params: Record<string, string> = {
       source_asset_type: src.type,
@@ -455,7 +416,7 @@ export class SimulatorService {
     let json: { _embedded?: { records?: HorizonPathRecord[] } };
     try {
       const url = this.buildHorizonPathUrl(horizonUrl, 'strict_receive', params);
-      json = await this.fetchFromHorizon(url);
+      json = await fetchFromHorizon(url);
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -511,11 +472,11 @@ export class SimulatorService {
   }
 
   async simulateFee(operations: number, network: string): Promise<FeeResult> {
-    const horizonUrl = this.getHorizonUrl(network);
+    const horizonUrl = getHorizonUrl(network);
 
     let json: Record<string, any>;
     try {
-      json = await this.fetchFromHorizon(`${horizonUrl}/fee_stats`);
+      json = await fetchFromHorizon(`${horizonUrl}/fee_stats`);
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       const message = err instanceof Error ? err.message : 'Unknown error';
