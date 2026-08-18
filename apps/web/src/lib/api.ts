@@ -3,6 +3,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 export interface AuthUser {
   id: string;
   email: string;
+  emailVerified: boolean;
   fluxaTenantId: string | null;
 }
 
@@ -43,9 +44,16 @@ export async function apiFetch<T>(
 }
 
 export async function register(email: string, password: string) {
-  return apiFetch<{ user: AuthUser }>('/auth/register', {
+  return apiFetch<{ userId: string; message: string }>('/auth/register', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function verifyEmail(token: string) {
+  return apiFetch<{ user: AuthUser }>('/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
   });
 }
 
@@ -74,6 +82,78 @@ export async function connectFluxa(apiKey: string) {
   return apiFetch<{ user: AuthUser }>('/auth/fluxa', {
     method: 'POST',
     body: JSON.stringify({ apiKey }),
+  });
+}
+
+/* ─── Connected accounts ─────────────────────────────────────────────────── */
+
+export interface ConnectedAccount {
+  id: string;
+  provider: string;
+  connectedAt: string;
+}
+
+export async function listConnectedAccounts() {
+  return apiFetch<ConnectedAccount[]>('/auth/connect');
+}
+
+export async function beginFluxaOAuth() {
+  return apiFetch<{ redirectUrl: string }>('/auth/connect/fluxa', {
+    method: 'POST',
+  });
+}
+
+export async function disconnectProvider(provider: string) {
+  return apiFetch<{ success: boolean }>(`/auth/connect/${encodeURIComponent(provider)}`, {
+    method: 'DELETE',
+  });
+}
+
+/* ─── API Key Vault ──────────────────────────────────────────────────────── */
+
+export type VaultKeyProvider = 'fluxa' | 'crowdpay' | 'custom';
+
+export interface VaultKey {
+  id: string;
+  name: string;
+  provider: VaultKeyProvider;
+  createdAt: string;
+}
+
+export async function listVaultKeys() {
+  return apiFetch<VaultKey[]>('/vault/keys');
+}
+
+export async function createVaultKey(name: string, provider: VaultKeyProvider, key: string) {
+  return apiFetch<VaultKey>('/vault/keys', {
+    method: 'POST',
+    body: JSON.stringify({ name, provider, key }),
+  });
+}
+
+export async function deleteVaultKey(id: string) {
+  return apiFetch<{ success: boolean }>(`/vault/keys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/* ─── Sessions ───────────────────────────────────────────────────────────── */
+
+export interface Session {
+  id: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export async function listSessions() {
+  return apiFetch<Session[]>('/auth/sessions');
+}
+
+export async function revokeSession(id: string) {
+  return apiFetch<{ success: boolean }>(`/auth/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }
 
@@ -501,7 +581,7 @@ export interface PathHop {
   assetIssuer: string | null;
 }
 
-export interface SimulatedPath {
+export interface SimulatorPath {
   sourceAmount: string;
   destinationAmount: string;
   path: PathHop[];
@@ -516,8 +596,8 @@ export interface SimulateStrictSendResult {
   network: string;
   mode: 'strict_send';
   totalPathsFound: number;
-  paths: SimulatedPath[];
-  bestPath: SimulatedPath;
+  paths: SimulatorPath[];
+  bestPath: SimulatorPath;
   slippagePercent: string;
 }
 
@@ -528,8 +608,8 @@ export interface SimulateStrictReceiveResult {
   network: string;
   mode: 'strict_receive';
   totalPathsFound: number;
-  paths: SimulatedPath[];
-  bestPath: SimulatedPath;
+  paths: SimulatorPath[];
+  bestPath: SimulatorPath;
   sourceAmountNeeded: string;
   slippagePercent: string;
 }

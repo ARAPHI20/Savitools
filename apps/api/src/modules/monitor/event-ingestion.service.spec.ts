@@ -3,8 +3,10 @@ import { DataType, IMemoryDb, newDb } from 'pg-mem';
 import { randomUUID } from 'crypto';
 import { DataSource } from 'typeorm';
 import { ApiKey } from '../playground/entities/api-key.entity';
+import { ConnectedAccount } from '../auth/entities/connected-account.entity';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { User } from '../auth/entities/user.entity';
+import { VaultKey } from '../auth/entities/vault-key.entity';
 import { Workspace } from '../workspace/entities/workspace.entity';
 import { AlertEvaluator } from './alert-evaluator.service';
 import { AlertEvent } from './entities/alert-event.entity';
@@ -44,6 +46,8 @@ describe('EventIngestionService', () => {
       entities: [
         User,
         RefreshToken,
+        ConnectedAccount,
+        VaultKey,
         Workspace,
         ApiKey,
         Watch,

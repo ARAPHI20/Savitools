@@ -1,13 +1,20 @@
+import {
+  ConflictException,
+  GoneException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
-import * as bcrypt from 'bcryptjs';
 
 function mockRepo() {
   return {
     findOne: jest.fn(),
-    create: jest.fn((dto) => ({ id: 'uuid-1', ...dto })),
-    save: jest.fn(async (entity) => entity),
-    delete: jest.fn(),
+    find: jest.fn(),
+    create: jest.fn((dto: Record<string, unknown>): Record<string, unknown> => ({ id: 'uuid-1', ...dto })),
+    save: jest.fn(async (entity: unknown) => entity),
+    delete: jest.fn(async () => ({ affected: 1 })),
+    remove: jest.fn(async (entity: unknown) => entity),
   };
 }
 
@@ -17,10 +24,15 @@ function mockJwt() {
 
 function mockConfig() {
   return {
-    getOrThrow: jest.fn(() => 'test-secret'),
-    get: jest.fn((key: string) => {
+    getOrThrow: jest.fn((key: string) => {
+      if (key === 'JWT_SECRET') return 'test-secret';
+      if (key === 'ENCRYPTION_SECRET') return 'test-encryption-secret-32-bytes!!';
+      throw new Error(`Missing config key: ${key}`);
+    }),
+    get: jest.fn((key: string, defaultValue?: unknown) => {
       if (key === 'NODE_ENV') return 'test';
-      return undefined;
+      if (key === 'RESEND_API_KEY') return undefined; // no email sending in tests
+      return defaultValue ?? undefined;
     }),
   };
 }
@@ -29,45 +41,78 @@ describe('AuthService', () => {
   let service: AuthService;
   let usersRepo: ReturnType<typeof mockRepo>;
   let refreshTokensRepo: ReturnType<typeof mockRepo>;
+  let connectedAccountsRepo: ReturnType<typeof mockRepo>;
+  let vaultKeysRepo: ReturnType<typeof mockRepo>;
   let jwt: ReturnType<typeof mockJwt>;
   let config: ReturnType<typeof mockConfig>;
 
+  /** Argon2id hash of 'password123' generated once for all login tests */
   let passwordHash: string;
 
   beforeAll(async () => {
-    passwordHash = await bcrypt.hash('password123', 4);
+    passwordHash = await argon2.hash('password123', {
+      type: argon2.argon2id,
+      memoryCost: 1024, // low cost for tests
+      timeCost: 1,
+      parallelism: 1,
+    });
   });
 
   beforeEach(() => {
     usersRepo = mockRepo();
     refreshTokensRepo = mockRepo();
+    connectedAccountsRepo = mockRepo();
+    vaultKeysRepo = mockRepo();
     jwt = mockJwt();
     config = mockConfig();
+
     service = new AuthService(
       usersRepo as any,
       refreshTokensRepo as any,
+      connectedAccountsRepo as any,
+      vaultKeysRepo as any,
       jwt as any,
       config as any,
     );
   });
 
+  // ─── register ──────────────────────────────────────────────────────────────
+
   describe('register', () => {
-    it('creates a new user and returns tokens', async () => {
+    it('creates a new user and returns { userId, message }', async () => {
       usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.create.mockReturnValue({
+        id: 'user-new',
+        email: 'test@example.com',
+        emailVerified: false,
+      });
+      usersRepo.save.mockResolvedValue({
+        id: 'user-new',
+        email: 'test@example.com',
+      });
 
       const result = await service.register({
         email: 'test@example.com',
         password: 'password123',
       });
 
-      expect(usersRepo.findOne).toHaveBeenCalledWith({
-        where: { email: 'test@example.com' },
+      expect(result.userId).toBe('user-new');
+      expect(result.message).toMatch(/check your email/i);
+    });
+
+    it('stores an argon2id hash (not bcrypt)', async () => {
+      usersRepo.findOne.mockResolvedValue(null);
+      let capturedHash = '';
+      usersRepo.create.mockImplementation((dto: { passwordHash?: string }) => {
+        capturedHash = dto.passwordHash ?? '';
+        return { id: 'u1', ...dto };
       });
-      expect(usersRepo.create).toHaveBeenCalled();
-      expect(usersRepo.save).toHaveBeenCalled();
-      expect(result.user).toBeDefined();
-      expect(result.tokens.accessToken).toBe('mock-access-token');
-      expect(result.tokens.refreshToken).toBeDefined();
+      usersRepo.save.mockResolvedValue({ id: 'u1', email: 'x@x.com' });
+
+      await service.register({ email: 'x@x.com', password: 'password123' });
+
+      expect(capturedHash).toMatch(/^\$argon2id\$/);
+      expect(capturedHash).not.toMatch(/^\$2[aby]\$/); // not bcrypt
     });
 
     it('throws ConflictException for duplicate email', async () => {
@@ -80,6 +125,7 @@ describe('AuthService', () => {
 
     it('lowercases the email', async () => {
       usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.save.mockResolvedValue({ id: 'u2', email: 'upper@example.com' });
 
       await service.register({ email: 'UPPER@EXAMPLE.COM', password: 'password123' });
 
@@ -87,20 +133,72 @@ describe('AuthService', () => {
         expect.objectContaining({ email: 'upper@example.com' }),
       );
     });
+
+    it('sets emailVerified=false and stores a verification token', async () => {
+      usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.save.mockResolvedValue({ id: 'u3', email: 'a@b.com' });
+
+      await service.register({ email: 'a@b.com', password: 'password123' });
+
+      expect(usersRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          emailVerified: false,
+          emailVerificationToken: expect.any(String),
+          emailVerificationExpiresAt: expect.any(Date),
+        }),
+      );
+    });
   });
 
+  // ─── verifyEmail ───────────────────────────────────────────────────────────
+
+  describe('verifyEmail', () => {
+    it('marks user as verified and issues tokens', async () => {
+      const expiresAt = new Date(Date.now() + 3_600_000);
+      const storedUser = {
+        id: 'u1',
+        email: 'a@b.com',
+        emailVerified: false,
+        emailVerificationToken: 'tok',
+        emailVerificationExpiresAt: expiresAt,
+      };
+      usersRepo.findOne.mockResolvedValue(storedUser);
+      usersRepo.save.mockResolvedValue({ ...storedUser, emailVerified: true });
+
+      const result = await service.verifyEmail('tok');
+
+      expect(result.user.emailVerified).toBe(true);
+      expect(result.tokens.accessToken).toBe('mock-access-token');
+    });
+
+    it('throws NotFoundException for unknown token', async () => {
+      usersRepo.findOne.mockResolvedValue(null);
+      await expect(service.verifyEmail('bad-tok')).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws GoneException (TOKEN_EXPIRED) for expired token', async () => {
+      usersRepo.findOne.mockResolvedValue({
+        id: 'u1',
+        email: 'a@b.com',
+        emailVerificationToken: 'tok',
+        emailVerificationExpiresAt: new Date(Date.now() - 1000), // past
+      });
+      await expect(service.verifyEmail('tok')).rejects.toThrow(GoneException);
+    });
+  });
+
+  // ─── login ─────────────────────────────────────────────────────────────────
+
   describe('login', () => {
-    it('returns tokens for valid credentials', async () => {
+    it('returns tokens for valid argon2id credentials', async () => {
       usersRepo.findOne.mockResolvedValue({
         id: 'user-1',
         email: 'test@example.com',
+        emailVerified: true,
         passwordHash,
       });
 
-      const result = await service.login({
-        email: 'test@example.com',
-        password: 'password123',
-      });
+      const result = await service.login({ email: 'test@example.com', password: 'password123' });
 
       expect(result.tokens.accessToken).toBe('mock-access-token');
       expect(result.tokens.refreshToken).toBeDefined();
@@ -110,6 +208,7 @@ describe('AuthService', () => {
       usersRepo.findOne.mockResolvedValue({
         id: 'user-1',
         email: 'test@example.com',
+        emailVerified: true,
         passwordHash,
       });
 
@@ -118,9 +217,8 @@ describe('AuthService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('throws UnauthorizedException for non-existent email', async () => {
+    it('throws UnauthorizedException for non-existent user', async () => {
       usersRepo.findOne.mockResolvedValue(null);
-
       await expect(
         service.login({ email: 'nobody@example.com', password: 'password123' }),
       ).rejects.toThrow(UnauthorizedException);
@@ -130,6 +228,7 @@ describe('AuthService', () => {
       usersRepo.findOne.mockResolvedValue({
         id: 'user-1',
         email: 'test@example.com',
+        emailVerified: true,
         passwordHash,
       });
 
@@ -141,29 +240,31 @@ describe('AuthService', () => {
     });
   });
 
+  // ─── refresh (rotation) ────────────────────────────────────────────────────
+
   describe('refresh', () => {
-    it('rotates tokens for a valid refresh token', async () => {
+    it('rotates tokens and deletes old token immediately', async () => {
       const { createHash } = require('crypto');
       const rawToken = 'raw-refresh-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
-      const storedToken = {
+      refreshTokensRepo.findOne.mockResolvedValue({
         id: 'rt-1',
         tokenHash,
-        expiresAt: new Date(Date.now() + 3600000),
-        user: { id: 'user-1', email: 'test@example.com' },
-      };
-
-      refreshTokensRepo.findOne.mockResolvedValue(storedToken);
+        expiresAt: new Date(Date.now() + 3_600_000),
+        user: { id: 'user-1', email: 'test@example.com', emailVerified: true },
+      });
 
       const result = await service.refresh(rawToken);
 
+      // Token must be deleted before new one is issued — prevents reuse
       expect(refreshTokensRepo.delete).toHaveBeenCalledWith('rt-1');
       expect(result.tokens.accessToken).toBe('mock-access-token');
+      expect(result.tokens.refreshToken).toBeDefined();
       expect(result.user.id).toBe('user-1');
     });
 
-    it('throws UnauthorizedException for expired token', async () => {
+    it('throws INVALID_REFRESH_TOKEN for expired token', async () => {
       const { createHash } = require('crypto');
       const rawToken = 'expired-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -172,18 +273,38 @@ describe('AuthService', () => {
         id: 'rt-2',
         tokenHash,
         expiresAt: new Date(Date.now() - 1000),
-        user: { id: 'user-1', email: 'test@example.com' },
+        user: { id: 'user-1', email: 'test@example.com', emailVerified: true },
       });
 
       await expect(service.refresh(rawToken)).rejects.toThrow(UnauthorizedException);
     });
 
-    it('throws UnauthorizedException for unknown token', async () => {
+    it('throws INVALID_REFRESH_TOKEN for unknown token', async () => {
       refreshTokensRepo.findOne.mockResolvedValue(null);
-
       await expect(service.refresh('unknown')).rejects.toThrow(UnauthorizedException);
     });
+
+    it('using the same refresh token twice: second use returns 401', async () => {
+      const { createHash } = require('crypto');
+      const rawToken = 'once-use-only';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+
+      refreshTokensRepo.findOne
+        .mockResolvedValueOnce({
+          id: 'rt-3',
+          tokenHash,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          user: { id: 'u1', email: 'a@b.com', emailVerified: true },
+        })
+        // Second call returns null — token was deleted after first use
+        .mockResolvedValueOnce(null);
+
+      await service.refresh(rawToken); // first use — succeeds
+      await expect(service.refresh(rawToken)).rejects.toThrow(UnauthorizedException); // second — 401
+    });
   });
+
+  // ─── logout ────────────────────────────────────────────────────────────────
 
   describe('logout', () => {
     it('deletes the refresh token hash', async () => {
@@ -196,6 +317,94 @@ describe('AuthService', () => {
       expect(refreshTokensRepo.delete).not.toHaveBeenCalled();
     });
   });
+
+  // ─── session management ────────────────────────────────────────────────────
+
+  describe('listSessions', () => {
+    it('returns all refresh tokens for the user', async () => {
+      const sessions = [{ id: 's1', userId: 'u1', userAgent: 'Chrome', ipAddress: '1.2.3.4' }];
+      refreshTokensRepo.find.mockResolvedValue(sessions);
+
+      const result = await service.listSessions('u1');
+      expect(result).toEqual(sessions);
+    });
+  });
+
+  describe('revokeSession', () => {
+    it('deletes the session by id', async () => {
+      refreshTokensRepo.findOne.mockResolvedValue({ id: 's1', userId: 'u1' });
+      await service.revokeSession('s1', 'u1');
+      expect(refreshTokensRepo.delete).toHaveBeenCalledWith('s1');
+    });
+
+    it('throws NotFoundException for unknown session', async () => {
+      refreshTokensRepo.findOne.mockResolvedValue(null);
+      await expect(service.revokeSession('bad', 'u1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── vault ─────────────────────────────────────────────────────────────────
+
+  describe('createVaultKey', () => {
+    it('encrypts key and does not return plaintext', async () => {
+      const savedKey = { id: 'vk1', name: 'My Key', provider: 'fluxa', createdAt: new Date() };
+      vaultKeysRepo.create.mockReturnValue(savedKey);
+      vaultKeysRepo.save.mockResolvedValue(savedKey);
+
+      const result = await service.createVaultKey('u1', {
+        name: 'My Key',
+        provider: 'fluxa' as any,
+        key: 'secret-api-key',
+      });
+
+      expect(result.id).toBe('vk1');
+      expect(result).not.toHaveProperty('key');
+      expect(result).not.toHaveProperty('encryptedKey');
+
+      // Verify what was stored is encrypted (not the plaintext)
+      const createArgs = vaultKeysRepo.create.mock.calls[0][0];
+      expect(createArgs.encryptedKey).toBeDefined();
+      expect(createArgs.encryptedKey).not.toBe('secret-api-key');
+    });
+  });
+
+  describe('resolveKey', () => {
+    it('returns decrypted vault key when one exists', async () => {
+      // Encrypt a test key so we can verify round-trip
+      const userId = 'u1';
+      const plainKey = 'my-fluxa-api-key';
+
+      // Use the service internals via the public createVaultKey path
+      const encryptedData = (service as any).encryptForUser(
+        userId,
+        plainKey,
+        'savitools-vault-key-v1',
+      );
+
+      vaultKeysRepo.findOne.mockResolvedValue({
+        id: 'vk1',
+        userId,
+        provider: 'fluxa',
+        encryptedKey: encryptedData.encrypted,
+        iv: encryptedData.iv,
+        authTag: encryptedData.authTag,
+        createdAt: new Date(),
+      });
+
+      const resolved = await service.resolveKey(userId, 'fluxa');
+      expect(resolved).toBe(plainKey);
+    });
+
+    it('returns null when no key exists for the provider', async () => {
+      vaultKeysRepo.findOne.mockResolvedValue(null);
+      connectedAccountsRepo.findOne.mockResolvedValue(null);
+
+      const resolved = await service.resolveKey('u1', 'fluxa');
+      expect(resolved).toBeNull();
+    });
+  });
+
+  // ─── getUserById ───────────────────────────────────────────────────────────
 
   describe('getUserById', () => {
     it('looks up user by id', async () => {

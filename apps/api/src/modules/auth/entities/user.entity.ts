@@ -6,7 +6,9 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { ApiKey } from '../../playground/entities/api-key.entity';
+import { ConnectedAccount } from './connected-account.entity';
 import { RefreshToken } from './refresh-token.entity';
+import { VaultKey } from './vault-key.entity';
 import { Workspace } from '../../workspace/entities/workspace.entity';
 
 @Entity('users')
@@ -28,6 +30,22 @@ export class User {
   })
   fluxaTenantId!: string | null;
 
+  /** Whether the user has clicked the verification link in their email */
+  @Column({ name: 'email_verified', type: 'boolean', default: false })
+  emailVerified!: boolean;
+
+  /** Opaque random token sent in the verification email (null once used) */
+  @Column({ name: 'email_verification_token', type: 'varchar', nullable: true })
+  emailVerificationToken!: string | null;
+
+  /** When the verification token expires (24 hours after registration) */
+  @Column({
+    name: 'email_verification_expires_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  emailVerificationExpiresAt!: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 
@@ -39,4 +57,10 @@ export class User {
 
   @OneToMany(() => ApiKey, (apiKey) => apiKey.user)
   apiKeys!: ApiKey[];
+
+  @OneToMany(() => ConnectedAccount, (account) => account.user)
+  connectedAccounts!: ConnectedAccount[];
+
+  @OneToMany(() => VaultKey, (key) => key.user)
+  vaultKeys!: VaultKey[];
 }
