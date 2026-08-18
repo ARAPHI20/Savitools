@@ -1,16 +1,25 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
+  Inject,
+  Param,
   Post,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiCookieAuth, ApiOperation, ApiTags, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import type { RedisClientType } from 'redis';
 import {
   ACCESS_TOKEN_COOKIE,
   ACCESS_TOKEN_TTL_SECONDS,
@@ -22,8 +31,17 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { FluxaDto } from './dto/fluxa.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
+
+type AuthRequest = FastifyRequest & { user?: { id: string; email: string } };
+
+function extractIp(req: FastifyRequest): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  return req.ip;
+}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -31,23 +49,36 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    @Inject('REDIS_CLIENT')
+    private readonly redis: RedisClientType,
   ) {}
+
+  // ─── Registration ─────────────────────────────────────────────────────────
 
   @Post('register')
   @ApiOperation({ summary: 'Register with email and password' })
-  @ApiResponse({ status: 201, description: 'User registered successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid registration data or user already exists' })
-  async register(
-    @Body() dto: RegisterDto,
+  @ApiResponse({ status: 201, description: 'Verification email sent' })
+  @ApiResponse({ status: 409, description: 'Email already in use' })
+  async register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @Post('verify-email')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Verify email address and receive session tokens' })
+  @ApiResponse({ status: 200, description: 'Email verified, tokens issued' })
+  @ApiResponse({ status: 404, description: 'Invalid token' })
+  @ApiResponse({ status: 410, description: 'TOKEN_EXPIRED' })
+  async verifyEmail(
+    @Body() dto: VerifyEmailDto,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const { user, tokens } = await this.authService.register(dto);
+    const { user, tokens } = await this.authService.verifyEmail(dto.token);
     this.setAuthCookies(reply, tokens.accessToken, tokens.refreshToken);
-
-    return {
-      user: { id: user.id, email: user.email, fluxaTenantId: user.fluxaTenantId },
-    };
+    return { user: { id: user.id, email: user.email, emailVerified: user.emailVerified } };
   }
+
+  // ─── Login ────────────────────────────────────────────────────────────────
 
   @Post('login')
   @HttpCode(200)
@@ -56,75 +87,122 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(
     @Body() dto: LoginDto,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const { user, tokens } = await this.authService.login(dto);
+    const { user, tokens } = await this.authService.login(dto, {
+      ipAddress: extractIp(req),
+      userAgent: req.headers['user-agent'],
+    });
     this.setAuthCookies(reply, tokens.accessToken, tokens.refreshToken);
-
     return {
-      user: { id: user.id, email: user.email, fluxaTenantId: user.fluxaTenantId },
+      user: {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        fluxaTenantId: user.fluxaTenantId,
+      },
     };
   }
 
+  // ─── Token rotation ───────────────────────────────────────────────────────
+
   @Post('refresh')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Rotate refresh token and issue a new access token' })
-  @ApiResponse({ status: 200, description: 'Token refreshed successfully' })
-  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  @ApiOperation({ summary: 'Rotate refresh token and issue new access token' })
+  @ApiResponse({ status: 200, description: 'Token refreshed' })
+  @ApiResponse({ status: 401, description: 'INVALID_REFRESH_TOKEN' })
   async refresh(
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const refreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE];
+    const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
     if (typeof refreshToken !== 'string') {
       this.clearAuthCookies(reply);
       return { authenticated: false };
     }
 
-    const { user, tokens } = await this.authService.refresh(refreshToken);
+    const { user, tokens } = await this.authService.refresh(refreshToken, {
+      ipAddress: extractIp(req),
+      userAgent: req.headers['user-agent'],
+    });
     this.setAuthCookies(reply, tokens.accessToken, tokens.refreshToken);
-
     return {
-      user: { id: user.id, email: user.email, fluxaTenantId: user.fluxaTenantId },
+      user: {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        fluxaTenantId: user.fluxaTenantId,
+      },
     };
   }
 
   @Post('logout')
   @HttpCode(200)
   @ApiOperation({ summary: 'Invalidate refresh token and clear auth cookies' })
-  @ApiResponse({ status: 200, description: 'Logged out successfully' })
   async logout(
-    @Req() request: FastifyRequest,
+    @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const refreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE];
+    const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
     if (typeof refreshToken === 'string') {
       await this.authService.logout(refreshToken);
     }
-
     this.clearAuthCookies(reply);
     return { success: true };
   }
 
+  // ─── Session management ────────────────────────────────────────────────────
+
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'List active sessions for the current user' })
+  async listSessions(@CurrentUser() user: { id: string }) {
+    const sessions = await this.authService.listSessions(user.id);
+    return sessions.map((s) => ({
+      id: s.id,
+      ipAddress: s.ipAddress,
+      userAgent: s.userAgent,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+    }));
+  }
+
+  @Delete('sessions/:id')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Revoke a specific session by ID' })
+  @ApiResponse({ status: 404, description: 'Session not found' })
+  async revokeSession(
+    @Param('id') id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    await this.authService.revokeSession(id, user.id);
+    return { success: true };
+  }
+
+  // ─── Fluxa OAuth (legacy direct-key link) ─────────────────────────────────
+
   @Post('fluxa')
   @HttpCode(200)
   @UseGuards(OptionalJwtAuthGuard)
-  @ApiOperation({
-    summary: 'Exchange a Fluxa API key for a SaviTools session and link accounts',
-  })
-  @ApiResponse({ status: 200, description: 'Fluxa authentication successful' })
-  @ApiResponse({ status: 400, description: 'Invalid Fluxa API key' })
+  @ApiOperation({ summary: 'Exchange a Fluxa API key for a SaviTools session' })
   async fluxa(
     @Body() dto: FluxaDto,
-    @Req() request: FastifyRequest & { user?: { id: string } },
+    @Req() req: AuthRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const currentUser = request.user
-      ? await this.authService.getUserById(request.user.id)
+    const currentUser = req.user
+      ? await this.authService.getUserById(req.user.id)
       : undefined;
-    const { user, tokens } = await this.authService.fluxaLink(dto, currentUser ?? undefined);
+    const { user, tokens } = await this.authService.fluxaLink(
+      dto,
+      currentUser ?? undefined,
+      { ipAddress: extractIp(req), userAgent: req.headers['user-agent'] },
+    );
     this.setAuthCookies(reply, tokens.accessToken, tokens.refreshToken);
-
     return {
       user: {
         id: user.id,
@@ -134,32 +212,93 @@ export class AuthController {
     };
   }
 
+  // ─── Connected accounts (OAuth flow) ──────────────────────────────────────
+
+  @Get('connect')
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'List connected external accounts' })
+  async listConnectedAccounts(@CurrentUser() user: { id: string }) {
+    return this.authService.listConnectedAccounts(user.id);
+  }
+
+  @Post('connect/fluxa')
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Begin Fluxa OAuth connection — returns redirect URL' })
+  async beginFluxaConnect(@CurrentUser() user: { id: string }) {
+    return this.authService.beginFluxaConnect(user.id, this.redis as unknown as {
+      set: (key: string, value: string, options: { EX: number }) => Promise<unknown>;
+    });
+  }
+
+  @Get('connect/fluxa/callback')
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Fluxa OAuth callback — validates state, stores encrypted key' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired OAuth state' })
+  async fluxaCallback(
+    @Req() req: AuthRequest & { query: { code: string; state: string } },
+  ) {
+    const { code, state } = req.query;
+    const account = await this.authService.completeFluxaConnect(
+      code,
+      state,
+      this.redis as unknown as {
+        get: (key: string) => Promise<string | null>;
+        del: (key: string) => Promise<unknown>;
+      },
+    );
+    return {
+      id: account.id,
+      provider: account.provider,
+      connectedAt: account.connectedAt,
+    };
+  }
+
+  @Delete('connect/:provider')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard)
+  @ApiCookieAuth()
+  @ApiOperation({ summary: 'Disconnect a provider and remove stored credential' })
+  @ApiResponse({ status: 404, description: 'Provider not connected' })
+  async disconnectProvider(
+    @Param('provider') provider: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    await this.authService.disconnectProvider(user.id, provider);
+    return { success: true };
+  }
+
+  // ─── Me ───────────────────────────────────────────────────────────────────
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiCookieAuth()
   @ApiOperation({ summary: 'Get the current authenticated user' })
-  @ApiResponse({ status: 200, description: 'User information retrieved' })
-  @ApiResponse({ status: 401, description: 'Not authenticated' })
   async me(@CurrentUser() user: { id: string; email: string }) {
     const record = await this.authService.getUserById(user.id);
-
     return {
       user: record
         ? {
             id: record.id,
             email: record.email,
+            emailVerified: record.emailVerified,
             fluxaTenantId: record.fluxaTenantId,
           }
         : null,
     };
   }
 
+  // ─── Private ──────────────────────────────────────────────────────────────
+
   private setAuthCookies(
     reply: FastifyReply,
     accessToken: string,
     refreshToken: string,
   ): void {
-    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
     const cookieOptions = {
       httpOnly: true,
       secure: isProduction,

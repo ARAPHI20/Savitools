@@ -16,6 +16,7 @@ import {
   logout as apiLogout,
   refreshSession,
   register as apiRegister,
+  verifyEmail as apiVerifyEmail,
 } from './api';
 
 interface AuthContextValue {
@@ -25,6 +26,7 @@ interface AuthContextValue {
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   connectFluxaAccount: (apiKey: string) => Promise<void>;
+  verifyEmail: (token: string) => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -63,7 +65,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
-    const result = await apiRegister(email, password);
+    // POST /auth/register now sends a verification email and returns { userId, message }.
+    // The user is NOT logged in until they click the link. We return the message so the
+    // caller can display it to the user.
+    await apiRegister(email, password);
+  }, []);
+
+  const verifyEmail = useCallback(async (token: string) => {
+    const result = await apiVerifyEmail(token);
     setUser(result.user);
   }, []);
 
@@ -85,9 +94,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       register,
       logout,
       connectFluxaAccount,
+      verifyEmail,
       refreshUser,
     }),
-    [user, loading, login, register, logout, connectFluxaAccount, refreshUser],
+    [user, loading, login, register, logout, connectFluxaAccount, verifyEmail, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

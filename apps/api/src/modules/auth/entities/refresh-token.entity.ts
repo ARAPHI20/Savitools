@@ -26,6 +26,14 @@ export class RefreshToken {
   @Column({ name: 'expires_at', type: 'timestamptz' })
   expiresAt!: Date;
 
+  /** IP address from which the token was issued */
+  @Column({ name: 'ip_address', type: 'varchar', nullable: true })
+  ipAddress!: string | null;
+
+  /** User-Agent header from the request that issued this token */
+  @Column({ name: 'user_agent', type: 'varchar', nullable: true })
+  userAgent!: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }

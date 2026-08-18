@@ -53,6 +53,7 @@ export function OperationList({
                     <li
                       ref={drag.innerRef}
                       {...drag.draggableProps}
+                      style={drag.draggableProps.style as React.CSSProperties}
                       className={`group flex items-center gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-all select-none
                         ${snapshot.isDragging ? 'shadow-2xl shadow-black/40 rotate-1 scale-[1.02]' : ''}
                         ${isSelected

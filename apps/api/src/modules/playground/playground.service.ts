@@ -16,6 +16,7 @@ import { ListHistoryDto } from './dto/list-history.dto';
 import { ApiKey, ApiKeyProvider } from './entities/api-key.entity';
 import { PlaygroundHistory } from './entities/playground-history.entity';
 import { ProxyRequestDto } from './dto/proxy-request.dto';
+import { AuthService } from '../auth/auth.service';
 
 interface CachedSpec {
   spec: Record<string, unknown>;
@@ -56,6 +57,7 @@ export class PlaygroundService {
     @InjectRepository(PlaygroundHistory)
     private readonly historyRepository: Repository<PlaygroundHistory>,
     private readonly configService: ConfigService,
+    private readonly authService: AuthService,
   ) {
     this.specTtlMs = this.configService.get<number>('PLAYGROUND_SPEC_TTL_MS', 3_600_000);
   }
@@ -105,9 +107,14 @@ export class PlaygroundService {
 
     const apiKeyRecord = await this.findUserKey(userId, dto.provider);
     if (!apiKeyRecord) {
-      throw new NotFoundException(
-        `No ${dto.provider} API key stored. Save one in Playground → Key Manager first.`,
-      );
+      // Fall back to the vault / connected accounts for key injection
+      const vaultKey = await this.authService.resolveKey(userId, dto.provider);
+      if (!vaultKey) {
+        throw new NotFoundException(
+          `No ${dto.provider} API key stored. Save one in Playground → Key Manager or the Vault first.`,
+        );
+      }
+      return this.executeProxyRequest(userId, dto, vaultKey, baseUrl);
     }
 
     const decryptedKey = this.decrypt(
@@ -115,7 +122,15 @@ export class PlaygroundService {
       apiKeyRecord.iv,
       apiKeyRecord.authTag,
     );
+    return this.executeProxyRequest(userId, dto, decryptedKey, baseUrl);
+  }
 
+  private async executeProxyRequest(
+    userId: string,
+    dto: ProxyRequestDto,
+    apiKey: string,
+    baseUrl: string,
+  ): Promise<ProxyResult> {
     const url = new URL(dto.path, baseUrl);
     if (dto.query) {
       for (const [key, value] of Object.entries(dto.query)) {
@@ -141,7 +156,7 @@ export class PlaygroundService {
         method: dto.method.toUpperCase(),
         headers: {
           ...headers,
-          Authorization: `Bearer ${decryptedKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: dto.body && dto.method !== 'GET' && dto.method !== 'HEAD'
           ? JSON.stringify(dto.body)
