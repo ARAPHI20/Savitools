@@ -668,3 +668,98 @@ export async function decodeXdr(
     body: JSON.stringify({ xdr, network }),
   });
 }
+
+/* ─── Federation ────────────────────────────────────────────────────────── */
+
+export interface FederationResolveResult {
+  stellarAddress: string | null;
+  federationAddress: string | null;
+  memo: string | null;
+  memoType: string | null;
+  homeDomain: string | null;
+}
+
+export interface TomlAccount {
+  PUBLIC_KEY: string;
+  NAME?: string;
+  HOME_DOMAIN?: string;
+  DESCRIPTION?: string;
+}
+
+export interface TomlCurrency {
+  code: string;
+  issuer: string;
+  display_decimals?: number;
+  name?: string;
+  desc?: string;
+  conditions?: string;
+  image?: string;
+  anchor_asset_type?: string;
+  anchor_asset?: string;
+  redemption_instructions?: string;
+  collateral_addresses?: string;
+  regulated?: boolean;
+  approval_server?: string;
+  approval_criteria?: string;
+}
+
+export interface TomlValidator {
+  PUBLIC_KEY: string;
+  NAME?: string;
+  HOST?: string;
+  HISTORY_URL?: string;
+}
+
+export interface TomlDocumentation {
+  PRINCIPALS_NAME?: string;
+  PRINCIPAL_EMAIL?: string;
+  PROJECT_URL?: string;
+  OFFICIAL_CHAT?: string;
+  OTHER_INFO?: string;
+}
+
+export interface TomlResult {
+  version: string | null;
+  networkPassphrase: string | null;
+  federationServer: string | null;
+  transferServer: string | null;
+  transferServerSep0024: string | null;
+  webAuthEndpoint: string | null;
+  directPaymentServer: string | null;
+  accounts: TomlAccount[];
+  currencies: TomlCurrency[];
+  validators: TomlValidator[];
+  documentation: TomlDocumentation | null;
+  fetchLatencyMs: number;
+  validationWarnings: string[];
+}
+
+export interface SepInfo {
+  number: number;
+  name: string;
+  supported: boolean;
+  endpoint: string | null;
+  probeStatus: 'green' | 'yellow' | 'red' | 'none';
+}
+
+export interface SepResult {
+  seps: SepInfo[];
+}
+
+export async function resolveFederation(address: string) {
+  return apiFetch<FederationResolveResult>(
+    `/federation/resolve?address=${encodeURIComponent(address)}`,
+  );
+}
+
+export async function fetchStellarToml(domain: string) {
+  return apiFetch<TomlResult>(
+    `/federation/toml?domain=${encodeURIComponent(domain)}`,
+  );
+}
+
+export async function fetchSepSupport(domain: string) {
+  return apiFetch<SepResult>(
+    `/federation/sep?domain=${encodeURIComponent(domain)}`,
+  );
+}

@@ -17,6 +17,7 @@ import { SimulatorModule } from './modules/simulator/simulator.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
+import { FederationModule } from './modules/federation/federation.module';
 import { CreateLedgerMonitor1752926400000 } from './database/migrations/1752926400000-create-ledger-monitor';
 import { AddMonitorStateAlerts1785312000000 } from './database/migrations/1785312000000-add-monitor-state-alerts';
 
@@ -61,6 +62,7 @@ import { AddMonitorStateAlerts1785312000000 } from './database/migrations/178531
     WebhookModule,
     ComposerModule,
     InspectorModule,
+    FederationModule,
   ],
   controllers: [AppController],
   providers: [
