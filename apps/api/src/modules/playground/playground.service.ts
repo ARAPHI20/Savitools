@@ -235,20 +235,45 @@ export class PlaygroundService {
 
   private async recordHistory(userId: string, dto: ProxyRequestDto, result: ProxyResult): Promise<void> {
     try {
+      const scrubHeaders = (headers: Record<string, string> | null | undefined) => {
+        if (!headers) return null;
+        const safe = { ...headers };
+        const sensitive = ['authorization', 'cookie', 'set-cookie'];
+        for (const key of Object.keys(safe)) {
+          if (sensitive.includes(key.toLowerCase())) {
+            safe[key] = '[REDACTED]';
+          }
+        }
+        return safe;
+      };
+
       const entry = this.historyRepository.create({
         userId,
         provider: dto.provider,
         method: dto.method.toUpperCase(),
         path: dto.path,
         query: dto.query ?? null,
-        requestHeaders: dto.headers ?? null,
+        requestHeaders: scrubHeaders(dto.headers),
         requestBody: dto.body ?? null,
         responseStatus: result.status,
-        responseHeaders: result.headers,
+        responseHeaders: scrubHeaders(result.headers) as Record<string, string>,
         responseBody: result.body,
         latencyMs: result.latencyMs,
       });
       await this.historyRepository.save(entry);
+
+      // Limit history to 50 items per user
+      const count = await this.historyRepository.count({ where: { userId } });
+      if (count > 50) {
+        const oldest = await this.historyRepository.find({
+          where: { userId },
+          order: { createdAt: 'ASC' },
+          take: count - 50,
+        });
+        if (oldest.length > 0) {
+          await this.historyRepository.remove(oldest);
+        }
+      }
     } catch (error) {
       this.logger.warn(`Failed to record playground history: ${error}`);
     }

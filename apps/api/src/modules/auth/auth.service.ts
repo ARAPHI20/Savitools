@@ -95,6 +95,7 @@ export class AuthService {
     });
 
     const verificationToken = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(verificationToken).digest('hex');
     const verificationExpiresAt = new Date(
       Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000,
     );
@@ -103,7 +104,7 @@ export class AuthService {
       email: dto.email.toLowerCase(),
       passwordHash,
       emailVerified: false,
-      emailVerificationToken: verificationToken,
+      emailVerificationToken: tokenHash,
       emailVerificationExpiresAt: verificationExpiresAt,
     });
 
@@ -114,8 +115,9 @@ export class AuthService {
   }
 
   async verifyEmail(token: string): Promise<{ user: User; tokens: SessionTokens }> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const user = await this.usersRepository.findOne({
-      where: { emailVerificationToken: token },
+      where: { emailVerificationToken: tokenHash },
     });
 
     if (!user) {

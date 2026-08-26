@@ -9,6 +9,7 @@ import {
   IsInt,
   Min,
   ValidateIf,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -20,21 +21,23 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class AssetDto {
   @ApiProperty({ example: 'USDC', description: '"native" or asset code' })
   @IsString()
+  @Matches(/^[a-zA-Z0-9]{1,12}$/, { message: 'Invalid asset code' })
   code: string;
 
   @ApiPropertyOptional({ example: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' })
   @IsOptional()
   @IsString()
+  @Matches(/^G[A-Z2-7]{55}$/, { message: 'Invalid Stellar issuer public key' })
   issuer?: string;
 }
 
 export class PriceDto {
   @ApiProperty({ example: '1' })
-  @IsNumberString()
+  @Matches(/^\d+$/, { message: 'Numerator must be an integer' })
   n: string;
 
   @ApiProperty({ example: '1' })
-  @IsNumberString()
+  @Matches(/^\d+$/, { message: 'Denominator must be an integer' })
   d: string;
 }
 
@@ -57,7 +60,7 @@ export class PaymentOpDto {
   asset: AssetDto;
 
   @ApiProperty({ example: '10' })
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   amount: string;
 }
 
@@ -71,7 +74,7 @@ export class CreateAccountOpDto {
   destination: string;
 
   @ApiProperty({ example: '1' })
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   startingBalance: string;
 }
 
@@ -87,7 +90,7 @@ export class ChangeTrustOpDto {
 
   @ApiPropertyOptional({ description: 'Omit to set max; "0" to remove trust' })
   @IsOptional()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   limit?: string;
 }
 
@@ -107,7 +110,7 @@ export class ManageSellOfferOpDto {
   buying: AssetDto;
 
   @ApiProperty({ example: '100' })
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   amount: string;
 
   @ApiProperty()
@@ -117,7 +120,7 @@ export class ManageSellOfferOpDto {
 
   @ApiPropertyOptional({ example: '0', description: '0 = create new offer' })
   @IsOptional()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   offerId?: string;
 }
 
@@ -137,7 +140,7 @@ export class ManageBuyOfferOpDto {
   buying: AssetDto;
 
   @ApiProperty({ example: '100' })
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   buyAmount: string;
 
   @ApiProperty()
@@ -147,7 +150,7 @@ export class ManageBuyOfferOpDto {
 
   @ApiPropertyOptional({ example: '0' })
   @IsOptional()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   offerId?: string;
 }
 
@@ -167,7 +170,7 @@ export class CreatePassiveSellOfferOpDto {
   buying: AssetDto;
 
   @ApiProperty()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   amount: string;
 
   @ApiProperty()
@@ -267,7 +270,7 @@ export class PathPaymentStrictSendOpDto {
   sendAsset: AssetDto;
 
   @ApiProperty()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   sendAmount: string;
 
   @ApiProperty()
@@ -280,7 +283,7 @@ export class PathPaymentStrictSendOpDto {
   destAsset: AssetDto;
 
   @ApiProperty()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   destMin: string;
 
   @ApiPropertyOptional({ type: [AssetDto] })
@@ -302,7 +305,7 @@ export class PathPaymentStrictReceiveOpDto {
   sendAsset: AssetDto;
 
   @ApiProperty()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   sendMax: string;
 
   @ApiProperty()
@@ -315,7 +318,7 @@ export class PathPaymentStrictReceiveOpDto {
   destAsset: AssetDto;
 
   @ApiProperty()
-  @IsNumberString()
+  @Matches(/^\d+(\.\d{1,7})?$/, { message: 'Must be a positive amount with up to 7 decimal places' })
   destAmount: string;
 
   @ApiPropertyOptional({ type: [AssetDto] })

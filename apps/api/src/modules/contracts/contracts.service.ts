@@ -24,12 +24,21 @@ export class ContractsService {
 
   constructor(private readonly configService: ConfigService) {
     const rpcUrl = this.configService.getOrThrow<string>('STELLAR_RPC_URL');
-    this.rpcServer = new rpc.Server(rpcUrl, { allowHttp: true });
+    const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
+    
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production' || 
+                         network.toLowerCase() === 'mainnet' || 
+                         network.toLowerCase() === 'public';
+
+    if (isProduction && rpcUrl.startsWith('http://')) {
+      throw new Error('Plaintext RPC (http) is not allowed for production signing');
+    }
+
+    this.rpcServer = new rpc.Server(rpcUrl, { allowHttp: !isProduction });
 
     const secretKey = this.configService.getOrThrow<string>('DEPLOYER_SECRET_KEY');
     this.deployer = Keypair.fromSecret(secretKey);
 
-    const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
     this.networkPassphrase =
       this.configService.get<string>('STELLAR_NETWORK_PASSPHRASE') ||
       (network.toLowerCase() === 'mainnet' || network.toLowerCase() === 'public'
