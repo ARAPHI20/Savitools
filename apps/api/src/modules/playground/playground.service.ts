@@ -17,6 +17,7 @@ import { ApiKey, ApiKeyProvider } from './entities/api-key.entity';
 import { PlaygroundHistory } from './entities/playground-history.entity';
 import { ProxyRequestDto } from './dto/proxy-request.dto';
 import { AuthService } from '../auth/auth.service';
+import { assertRelativePath, assertSafeDestination, MAX_PROXY_REDIRECTS } from './ssrf-guard';
 
 interface CachedSpec {
   spec: Record<string, unknown>;
@@ -131,12 +132,17 @@ export class PlaygroundService {
     apiKey: string,
     baseUrl: string,
   ): Promise<ProxyResult> {
+    assertRelativePath(dto.path);
+
     const url = new URL(dto.path, baseUrl);
     if (dto.query) {
       for (const [key, value] of Object.entries(dto.query)) {
         url.searchParams.set(key, value);
       }
     }
+
+    const allowedOrigins = [new URL(baseUrl).origin];
+    await assertSafeDestination(url, allowedOrigins);
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -151,8 +157,9 @@ export class PlaygroundService {
     const start = Date.now();
 
     let response: Response;
+    let target = url;
     try {
-      response = await fetch(url.toString(), {
+      const requestInit = {
         method: dto.method.toUpperCase(),
         headers: {
           ...headers,
@@ -162,8 +169,33 @@ export class PlaygroundService {
           ? JSON.stringify(dto.body)
           : undefined,
         signal: AbortSignal.timeout(30_000),
-      });
+        redirect: 'manual' as const,
+      };
+
+      response = await fetch(target.toString(), requestInit);
+
+      let hops = 0;
+      while ([301, 302, 303, 307, 308].includes(response.status) && response.headers.has('location')) {
+        if (++hops > MAX_PROXY_REDIRECTS) {
+          throw new BadGatewayException(`Too many redirects from ${dto.provider}`);
+        }
+
+        const location = response.headers.get('location')!;
+        target = new URL(location, target);
+        await assertSafeDestination(target, allowedOrigins);
+
+        response = await fetch(target.toString(), {
+          ...requestInit,
+          // Redirects for non-GET/HEAD methods should be re-issued as GET
+          // per the 303 spec, and it's the safer default for the rest too.
+          method: response.status === 303 ? 'GET' : requestInit.method,
+          body: response.status === 303 ? undefined : requestInit.body,
+        });
+      }
     } catch (error) {
+      if (error instanceof BadGatewayException || error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadGatewayException(`Request to ${dto.provider} failed: ${error}`);
     }
 
