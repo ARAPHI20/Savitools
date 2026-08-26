@@ -340,6 +340,29 @@ export class ComposerService {
     const networkPassphrase =
       network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
 
+    let tx: Transaction;
+    try {
+      tx = new Transaction(dto.xdr, networkPassphrase);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(`Invalid XDR: ${message}`);
+    }
+
+    return {
+      success: true,
+      hash: tx.hash().toString('hex'),
+      fee: null,
+      resultCodes: null,
+      operationResults: null,
+      ledger: null,
+    };
+  }
+
+  async sendTransaction(dto: SimulateTransactionDto) {
+    const network = dto.network ?? 'testnet';
+    const networkPassphrase =
+      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+
     const horizonUrl =
       network === 'mainnet'
         ? 'https://horizon.stellar.org'
@@ -381,7 +404,7 @@ export class ComposerService {
       const resultCodes = extras?.result_codes ?? null;
       const txCode = resultCodes?.transaction ?? 'unknown';
 
-      this.logger.warn(`Simulation failed: ${txCode}`);
+      this.logger.warn(`Transaction submission failed: ${txCode}`);
 
       return {
         success: false,
