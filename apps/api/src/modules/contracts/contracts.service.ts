@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   rpc,
@@ -157,6 +157,8 @@ export class ContractsService {
       throw new BadRequestException('Invalid contract ID format');
     }
 
+    this.assertInvocationAllowed(contractId, functionName);
+
     const scVals: xdr.ScVal[] = args.map((arg) => nativeToScVal(arg));
     const account = await this.rpcServer.getAccount(this.deployer.publicKey());
 
@@ -194,6 +196,32 @@ export class ContractsService {
       result: returnValue,
       txHash: sendResult.hash,
     };
+  }
+
+  /**
+   * Invoking arbitrary functions on arbitrary contracts with the deployer key would let
+   * any authorized caller drain or misuse the shared account. Both the contract and the
+   * function must appear in the configured allowlists; an unset allowlist denies
+   * everything rather than defaulting to open access.
+   */
+  private assertInvocationAllowed(contractId: string, functionName: string): void {
+    const allowedContracts = this.parseAllowlist('CONTRACT_INVOKE_ALLOWED_CONTRACTS');
+    if (!allowedContracts.includes(contractId)) {
+      throw new ForbiddenException(`Contract ${contractId} is not allowlisted for invocation`);
+    }
+
+    const allowedFunctions = this.parseAllowlist('CONTRACT_INVOKE_ALLOWED_FUNCTIONS');
+    if (!allowedFunctions.includes(functionName)) {
+      throw new ForbiddenException(`Function "${functionName}" is not allowlisted for invocation`);
+    }
+  }
+
+  private parseAllowlist(configKey: string): string[] {
+    const raw = this.configService.get<string>(configKey, '');
+    return raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
   }
 
   async getInfo(

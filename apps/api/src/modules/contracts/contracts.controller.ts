@@ -6,12 +6,15 @@ import {
   Body,
   Req,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags, ApiConsumes, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiOperation, ApiTags, ApiConsumes, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { FastifyRequest } from 'fastify';
 import { ContractsService } from './contracts.service';
 import { InvokeContractDto } from './dto/invoke-contract.dto';
 import { DeployContractDto } from './dto/deploy-contract.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ContractAuthorizationGuard } from './guards/contract-authorization.guard';
 
 @ApiTags('contracts')
 @Controller('contracts')
@@ -19,10 +22,14 @@ export class ContractsController {
   constructor(private readonly contractsService: ContractsService) {}
 
   @Post('deploy')
+  @ApiCookieAuth()
+  @UseGuards(JwtAuthGuard, ContractAuthorizationGuard)
   @ApiOperation({ summary: 'Deploy a Soroban smart contract from a WASM file' })
   @ApiConsumes('multipart/form-data')
   @ApiResponse({ status: 200, description: 'Contract deployed successfully' })
   @ApiResponse({ status: 400, description: 'Invalid WASM file or parameters' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Not authorized to deploy contracts' })
   async deploy(@Req() req: FastifyRequest) {
     const file = await req.file();
 
@@ -46,10 +53,14 @@ export class ContractsController {
   }
 
   @Post(':contractId/invoke')
+  @ApiCookieAuth()
+  @UseGuards(JwtAuthGuard, ContractAuthorizationGuard)
   @ApiOperation({ summary: 'Invoke a contract function' })
   @ApiParam({ name: 'contractId', description: 'Contract ID' })
   @ApiResponse({ status: 200, description: 'Contract function invoked successfully' })
   @ApiResponse({ status: 400, description: 'Invalid contract ID or parameters' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Not authorized to invoke this function' })
   async invoke(
     @Param('contractId') contractId: string,
     @Body() dto: InvokeContractDto,
