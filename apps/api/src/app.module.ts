@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -18,6 +18,8 @@ import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
 import { FederationModule } from './modules/federation/federation.module';
+import { DataSource } from 'typeorm';
+import { CreatePlaygroundHistory1784642239000 } from './database/migrations/1784642239000-create-playground-history';
 import { CreateLedgerMonitor1752926400000 } from './database/migrations/1752926400000-create-ledger-monitor';
 import { AddMonitorStateAlerts1785312000000 } from './database/migrations/1785312000000-add-monitor-state-alerts';
 import { AddAuthEnhancements1785398400000 } from './database/migrations/1785398400000-add-auth-enhancements';
@@ -45,6 +47,7 @@ import { AddAuthEnhancements1785398400000 } from './database/migrations/17853984
         synchronize: config.get<string>('NODE_ENV') !== 'production',
         migrations: [
           CreateLedgerMonitor1752926400000,
+          CreatePlaygroundHistory1784642239000,
           AddMonitorStateAlerts1785312000000,
           AddAuthEnhancements1785398400000,
         ],
@@ -75,4 +78,22 @@ import { AddAuthEnhancements1785398400000 } from './database/migrations/17853984
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements OnApplicationBootstrap {
+  private readonly logger = new Logger(AppModule.name);
+
+  constructor(private dataSource: DataSource, private configService: ConfigService) {}
+
+  async onApplicationBootstrap() {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    const autoRun = this.configService.get<string>('RUN_MIGRATIONS') === 'true';
+
+    // Fail fast in production if migrations are behind and auto-run is not enabled
+    if (isProduction && !autoRun) {
+      const hasPending = await this.dataSource.showMigrations();
+      if (hasPending) {
+        this.logger.error('Pending migrations detected in production. Failing fast.');
+        process.exit(1);
+      }
+    }
+  }
+}

@@ -156,19 +156,18 @@ export class SimulatorService {
   }
 
   private calculateRecommendedSlippage(
-    sourceAmount: string,
-    destinationAmount: string,
+    pathRate: number,
+    bestRate: number,
     hops: number,
   ): number {
-    const src = parseFloat(sourceAmount);
-    const dst = parseFloat(destinationAmount);
-
-    if (src === 0 || dst === 0 || isNaN(src) || isNaN(dst)) {
+    if (pathRate === 0 || bestRate === 0 || isNaN(pathRate) || isNaN(bestRate)) {
       return Math.min(1 + hops * 0.5, 10);
     }
 
-    const rateDeviation = Math.abs(1 - dst / src);
+    // Compare this path's rate against the best possible rate
+    const rateDeviation = Math.abs(1 - pathRate / bestRate);
     const depthPenalty = hops * 0.3;
+    // Base slippage on route-price dispersion with a minimum floor of 0.1%
     const baseSlippage = Math.max(rateDeviation * 100, 0.1);
     const recommended = Math.min(baseSlippage * 1.5 + depthPenalty, 25);
 
@@ -207,6 +206,14 @@ export class SimulatorService {
       rawPaths = result.records;
     }
 
+    const bestPath = rawPaths[0];
+    let bestRate = 0;
+    if (bestPath) {
+      const bestSrc = parseFloat(bestPath.source_amount);
+      const bestDst = parseFloat(bestPath.destination_amount);
+      bestRate = bestSrc > 0 ? bestDst / bestSrc : 0;
+    }
+
     return rawPaths.map((record: any) => {
       const sourceAssetParsed = this.parseAsset({
         asset_type: record.source_asset_type,
@@ -239,8 +246,8 @@ export class SimulatorService {
         effective_rate: effectiveRate,
         estimated_fee: '0.00001',
         recommended_slippage: this.calculateRecommendedSlippage(
-          record.source_amount,
-          record.destination_amount,
+          parseFloat(record.source_amount) > 0 ? parseFloat(record.destination_amount) / parseFloat(record.source_amount) : 0,
+          bestRate,
           intermediateAssets.length,
         ),
         hops: intermediateAssets.length,

@@ -3,8 +3,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  BadGatewayException,
 } from '@nestjs/common';
 import * as toml from 'toml';
+import { assertPublicHostname, MAX_PROXY_REDIRECTS } from '../playground/ssrf-guard';
 
 const FETCH_TIMEOUT = 15_000;
 
@@ -108,13 +110,39 @@ export class FederationService {
   private readonly logger = new Logger(FederationService.name);
 
   private async fetchWithTimeout(
-    url: string,
+    urlStr: string,
     timeout = FETCH_TIMEOUT,
   ): Promise<Response> {
-    const response = await fetch(url, {
+    let target = new URL(urlStr);
+    
+    if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+      throw new BadRequestException(`Unsupported protocol: ${target.protocol}`);
+    }
+
+    await assertPublicHostname(target.hostname);
+
+    const requestInit = {
       signal: AbortSignal.timeout(timeout),
       headers: { Accept: '*/*' },
-    });
+      redirect: 'manual' as const,
+    };
+
+    let response = await fetch(target.toString(), requestInit);
+    let hops = 0;
+
+    while ([301, 302, 303, 307, 308].includes(response.status) && response.headers.has('location')) {
+      if (++hops > MAX_PROXY_REDIRECTS) {
+        throw new BadGatewayException('Too many redirects');
+      }
+      target = new URL(response.headers.get('location')!, target);
+      if (target.protocol !== 'https:' && target.protocol !== 'http:') {
+        throw new BadRequestException(`Unsupported protocol in redirect: ${target.protocol}`);
+      }
+      await assertPublicHostname(target.hostname);
+
+      response = await fetch(target.toString(), requestInit);
+    }
+
     return response;
   }
 
