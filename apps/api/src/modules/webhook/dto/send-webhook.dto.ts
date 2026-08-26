@@ -3,7 +3,7 @@ import { IsObject, IsOptional, IsString, IsUrl, MinLength } from 'class-validato
 
 export class SendWebhookDto {
   @ApiProperty({ example: 'https://example.com/webhooks/crowdpay', description: 'Target endpoint URL' })
-  @IsUrl()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
   @MinLength(1)
   endpointUrl!: string;
 

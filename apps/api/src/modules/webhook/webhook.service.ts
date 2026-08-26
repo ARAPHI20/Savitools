@@ -4,6 +4,7 @@ import {
   OnModuleDestroy,
   Logger,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, RedisClientType } from 'redis';
@@ -11,9 +12,11 @@ import * as crypto from 'crypto';
 import { randomUUID } from 'crypto';
 import { WEBHOOK_TEMPLATES } from './webhook-templates';
 import { SendWebhookDto } from './dto/send-webhook.dto';
+import { assertSafeWebhookDestination, MAX_WEBHOOK_REDIRECTS } from './ssrf-guard';
 
 export interface WebhookHistoryEntry {
   id: string;
+  userId: string;
   eventType: string;
   endpointUrl: string;
   payload: Record<string, unknown>;
@@ -26,9 +29,19 @@ export interface WebhookHistoryEntry {
   error?: string;
 }
 
-const REDIS_KEY = 'webhook_history';
+const REDIS_KEY_PREFIX = 'webhook_history';
 const REDIS_TTL = 86400;
 const MAX_HISTORY = 50;
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
+const SENSITIVE_HEADER_NAMES = new Set(['set-cookie', 'authorization', 'cookie', 'proxy-authorization']);
+
+function redactHeaders(headers: Record<string, string>): Record<string, string> {
+  const redacted: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    redacted[key] = SENSITIVE_HEADER_NAMES.has(key.toLowerCase()) ? '[REDACTED]' : value;
+  }
+  return redacted;
+}
 
 @Injectable()
 export class WebhookService implements OnModuleInit, OnModuleDestroy {
@@ -63,7 +76,7 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
     return WEBHOOK_TEMPLATES;
   }
 
-  async sendWebhook(dto: SendWebhookDto): Promise<WebhookHistoryEntry> {
+  async sendWebhook(userId: string, dto: SendWebhookDto): Promise<WebhookHistoryEntry> {
     const template = WEBHOOK_TEMPLATES.find(
       (t) => t.eventType === dto.eventType,
     );
@@ -72,6 +85,14 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
         `Unknown event type "${dto.eventType}". Provide a custom payload or use a valid eventType.`,
       );
     }
+
+    let destinationUrl: URL;
+    try {
+      destinationUrl = new URL(dto.endpointUrl);
+    } catch {
+      throw new BadRequestException('endpointUrl must be a valid URL');
+    }
+    await assertSafeWebhookDestination(destinationUrl);
 
     const payload = dto.payload ?? template!.samplePayload;
 
@@ -95,7 +116,7 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
     let error: string | undefined;
 
     try {
-      const response = await fetch(dto.endpointUrl, {
+      const response = await this.fetchWithRedirectGuard(destinationUrl, {
         method: 'POST',
         headers: requestHeaders,
         body: JSON.stringify(payload),
@@ -103,7 +124,7 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
       });
 
       statusCode = response.status;
-      responseHeaders = Object.fromEntries(response.headers.entries());
+      responseHeaders = redactHeaders(Object.fromEntries(response.headers.entries()));
 
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
@@ -112,6 +133,9 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
         responseBody = await response.text();
       }
     } catch (err) {
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
       error = err instanceof Error ? err.message : 'Unknown fetch error';
       this.logger.error(`Webhook delivery failed to ${dto.endpointUrl}`, err);
     }
@@ -120,10 +144,11 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
 
     const entry: WebhookHistoryEntry = {
       id: randomUUID(),
+      userId,
       eventType: dto.eventType,
       endpointUrl: dto.endpointUrl,
       payload,
-      requestHeaders,
+      requestHeaders: redactHeaders(requestHeaders),
       statusCode,
       responseHeaders,
       responseBody,
@@ -137,9 +162,9 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
     return entry;
   }
 
-  async getHistory(): Promise<WebhookHistoryEntry[]> {
+  async getHistory(userId: string): Promise<WebhookHistoryEntry[]> {
     try {
-      const results = await this.redisClient.lRange(REDIS_KEY, 0, -1);
+      const results = await this.redisClient.lRange(this.historyKey(userId), 0, -1);
       return results.map((r) => JSON.parse(r) as WebhookHistoryEntry);
     } catch (err) {
       this.logger.error('Failed to fetch webhook history', err);
@@ -147,26 +172,58 @@ export class WebhookService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async replay(id: string): Promise<WebhookHistoryEntry> {
-    const history = await this.getHistory();
+  async replay(id: string, userId: string): Promise<WebhookHistoryEntry> {
+    const history = await this.getHistory(userId);
     const original = history.find((entry) => entry.id === id);
 
     if (!original) {
-      throw new BadRequestException(`Webhook attempt ${id} not found`);
+      throw new NotFoundException(`Webhook attempt ${id} not found`);
     }
 
-    return this.sendWebhook({
+    return this.sendWebhook(userId, {
       endpointUrl: original.endpointUrl,
       eventType: original.eventType,
       payload: original.payload,
     });
   }
 
+  /**
+   * Follows redirects manually so each hop's destination is re-validated
+   * against the SSRF guard before being requested — otherwise an attacker
+   * could point the initial URL at a public host that 302s to an internal one.
+   */
+  private async fetchWithRedirectGuard(url: URL, init: RequestInit): Promise<Response> {
+    let currentUrl = url;
+
+    for (let hop = 0; hop <= MAX_WEBHOOK_REDIRECTS; hop++) {
+      const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+
+      if (!REDIRECT_STATUS_CODES.has(response.status)) {
+        return response;
+      }
+
+      const location = response.headers.get('location');
+      if (!location) {
+        return response;
+      }
+
+      currentUrl = new URL(location, currentUrl);
+      await assertSafeWebhookDestination(currentUrl);
+    }
+
+    throw new BadRequestException('Too many redirects');
+  }
+
+  private historyKey(userId: string): string {
+    return `${REDIS_KEY_PREFIX}:${userId}`;
+  }
+
   private async storeEntry(entry: WebhookHistoryEntry): Promise<void> {
     try {
-      await this.redisClient.lPush(REDIS_KEY, JSON.stringify(entry));
-      await this.redisClient.lTrim(REDIS_KEY, 0, MAX_HISTORY - 1);
-      await this.redisClient.expire(REDIS_KEY, REDIS_TTL);
+      const key = this.historyKey(entry.userId);
+      await this.redisClient.lPush(key, JSON.stringify(entry));
+      await this.redisClient.lTrim(key, 0, MAX_HISTORY - 1);
+      await this.redisClient.expire(key, REDIS_TTL);
     } catch (err) {
       this.logger.error('Failed to store webhook entry', err);
     }
