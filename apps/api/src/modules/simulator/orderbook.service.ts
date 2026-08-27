@@ -217,7 +217,19 @@ export class OrderbookService implements OnModuleInit, OnModuleDestroy {
     const redis = this.redisClient;
     if (!redis) return;
     try {
-      await redis.sAdd(`orderbook:active_pairs:${network}`, pairKey(selling, buying));
+      // Validate and canonicalize to prevent creating unbounded unique junk keys
+      const s = parseAssetParams(selling);
+      const b = parseAssetParams(buying);
+      const sStr = s.type === 'native' ? 'native' : `${s.code}:${s.issuer}`;
+      const bStr = b.type === 'native' ? 'native' : `${b.code}:${b.issuer}`;
+
+      // Use a sorted set to track when it was last requested
+      const key = `orderbook:active_pairs:${network}`;
+      await redis.zAdd(key, [{ score: Date.now(), value: pairKey(sStr, bStr) }]);
+      // Limit to max 1000 active pairs per network to prevent unbounded growth
+      if (await redis.zCard(key) > 1000) {
+        await redis.zRemRangeByRank(key, 0, 0); // remove the oldest
+      }
     } catch (err) {
       this.logger.error('Failed to register active pair', err as Error);
     }
@@ -227,30 +239,42 @@ export class OrderbookService implements OnModuleInit, OnModuleDestroy {
     const redis = this.redisClient;
     if (!redis) return;
 
+    const EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+    const now = Date.now();
+
     for (const network of ['mainnet', 'testnet'] as OrderbookNetwork[]) {
       let pairs: string[];
       try {
-        pairs = await redis.sMembers(`orderbook:active_pairs:${network}`);
+        const key = `orderbook:active_pairs:${network}`;
+        // Clean up pairs that haven't been requested recently
+        await redis.zRemRangeByScore(key, 0, now - EXPIRY_MS);
+        // Fetch up to 100 pairs to poll
+        pairs = await redis.zRange(key, 0, 99, { REV: true });
       } catch (err) {
         this.logger.error(`Failed to read active pairs for ${network}`, err as Error);
         continue;
       }
 
-      for (const pair of pairs) {
-        const [selling, buying] = pair.split('|');
-        if (!selling || !buying) continue;
+      // Concurrency control: map in chunks or use Promise.all with small arrays
+      const CONCURRENCY_LIMIT = 5;
+      for (let i = 0; i < pairs.length; i += CONCURRENCY_LIMIT) {
+        const chunk = pairs.slice(i, i + CONCURRENCY_LIMIT);
+        await Promise.allSettled(chunk.map(async (pair) => {
+          const [selling, buying] = pair.split('|');
+          if (!selling || !buying) return;
 
-        try {
-          const raw = await this.fetchHorizonOrderBook(selling, buying, network);
-          const { midPrice } = this.computeOrderbook(selling, buying, network, raw);
-          const snapshot: MidPriceSnapshot = { timestamp: Date.now(), midPrice };
+          try {
+            const raw = await this.fetchHorizonOrderBook(selling, buying, network);
+            const { midPrice } = this.computeOrderbook(selling, buying, network, raw);
+            const snapshot: MidPriceSnapshot = { timestamp: Date.now(), midPrice };
 
-          const historyKey = `orderbook:history:${network}:${pair}`;
-          await redis.lPush(historyKey, JSON.stringify(snapshot));
-          await redis.lTrim(historyKey, 0, HISTORY_LENGTH - 1);
-        } catch (err) {
-          this.logger.error(`Failed to poll order book for ${network}:${pair}`, err as Error);
-        }
+            const historyKey = `orderbook:history:${network}:${pair}`;
+            await redis.lPush(historyKey, JSON.stringify(snapshot));
+            await redis.lTrim(historyKey, 0, HISTORY_LENGTH - 1);
+          } catch (err) {
+            this.logger.error(`Failed to poll order book for ${network}:${pair}`, err as Error);
+          }
+        }));
       }
     }
   }
