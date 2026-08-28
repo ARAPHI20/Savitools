@@ -182,6 +182,44 @@ describe('EventsService', () => {
       ).rejects.toThrow(/retention window/i);
     });
 
+    // The SDK rejects with a bare JSON-RPC object, not an Error. Verified
+    // against live testnet: { code: -32600, message: 'startLedger must be
+    // within the ledger range: 4257975 - 4378934' }.
+    it('handles the SDK rejecting with a plain {code,message} object', async () => {
+      getEvents.mockRejectedValue({
+        code: -32600,
+        message: 'startLedger must be within the ledger range: 4257975 - 4378934',
+      });
+
+      await expect(
+        service.queryEvents({ contractId: CONTRACT_ID, startLedger: 1000 }),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.queryEvents({ contractId: CONTRACT_ID, startLedger: 1000 }),
+      ).rejects.toThrow(/4257975 - 4378934/);
+    });
+
+    it('never surfaces "[object Object]" for a non-Error rejection', async () => {
+      getEvents.mockRejectedValue({ code: -32000, message: 'internal node failure' });
+
+      await expect(
+        service.queryEvents({ contractId: CONTRACT_ID, startLedger: 1 }),
+      ).rejects.toThrow(/internal node failure \(rpc code -32000\)/);
+
+      await expect(
+        service.queryEvents({ contractId: CONTRACT_ID, startLedger: 1 }),
+      ).rejects.not.toThrow(/\[object Object\]/);
+    });
+
+    it('falls back to JSON for an object with no message', async () => {
+      getEvents.mockRejectedValue({ weird: true });
+
+      await expect(
+        service.queryEvents({ contractId: CONTRACT_ID, startLedger: 1 }),
+      ).rejects.toThrow(/\{"weird":true\}/);
+    });
+
     it('translates other upstream failures into a 502', async () => {
       getEvents.mockRejectedValue(new Error('connect ECONNREFUSED'));
 

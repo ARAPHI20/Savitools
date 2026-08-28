@@ -127,12 +127,35 @@ export class EventsService {
   }
 
   /**
+   * The SDK rejects with a bare JSON-RPC object ({ code, message }) rather than
+   * an Error, so `String(err)` would yield "[object Object]" and lose the one
+   * piece of text the caller needs.
+   */
+  private errorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+
+    if (err && typeof err === 'object') {
+      const { message, code } = err as { message?: unknown; code?: unknown };
+      if (typeof message === 'string' && message.length > 0) {
+        return typeof code === 'number' ? `${message} (rpc code ${code})` : message;
+      }
+      try {
+        return JSON.stringify(err);
+      } catch {
+        return 'Unknown upstream error';
+      }
+    }
+
+    return String(err);
+  }
+
+  /**
    * Soroban RPC keeps only a short event window (roughly 24h on public
    * networks), so an out-of-range startLedger is a user-correctable 400 rather
    * than an opaque upstream failure.
    */
   private upstreamError(err: unknown, fallback: string): Error {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = this.errorMessage(err);
 
     if (/start(Ledger)?|ledger/i.test(message) && /range|retention|not available|too old|must be within/i.test(message)) {
       return new BadRequestException(
