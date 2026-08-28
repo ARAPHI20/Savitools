@@ -1,44 +1,27 @@
-import { CodeGenerator, GeneratorContext } from './types';
+import { CodeGenerator, GeneratorContext, operationsFor, requestProperties, schemaExample, OpenApiOperation } from './types';
+
+function goString(value: unknown): string {
+  return JSON.stringify(String(value)).replace(/\\u2028|\\u2029/g, '');
+}
 
 export class GoGenerator implements CodeGenerator {
   generate(context: GeneratorContext): string {
-    const { spec, endpoint } = context;
-    const baseUrl = spec.servers?.[0]?.url || 'https://api.example.com';
-    let code = `package main\n\nimport (\n\t"bytes"\n\t"fmt"\n\t"net/http"\n)\n\nfunc main() {\n`;
-
-    const paths = endpoint ? { [endpoint]: spec.paths[endpoint] } : spec.paths;
-
-    for (const [path, pathItem] of Object.entries(paths || {})) {
-      if (!pathItem) continue;
-      for (const [method, operation] of Object.entries(pathItem)) {
-        if (method === 'post') {
-          code += `\t// ${operation.summary || 'Operation'}\n`;
-          code += `\turl := "${baseUrl}${path}"\n`;
-          
-          let jsonPayload = `{`;
-          const props = operation.requestBody?.content?.['application/json']?.schema?.properties || {};
-          const keys = Object.keys(props);
-          for (let i = 0; i < keys.length; i++) {
-            const key = keys[i];
-            const prop = props[key] as any;
-            jsonPayload += `\\"${key}\\": \\"${prop.example || 'TODO'}\\"`;
-            if (i < keys.length - 1) jsonPayload += `, `;
-          }
-          jsonPayload += `}`;
-          
-          code += `\tvar jsonStr = []byte(\`${jsonPayload}\`)\n`;
-          code += `\treq, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))\n`;
-          code += `\treq.Header.Set("Authorization", "Bearer "+API_KEY)\n`;
-          code += `\treq.Header.Set("Content-Type", "application/json")\n`;
-          code += `\n\tclient := &http.Client{}\n`;
-          code += `\tresp, err := client.Do(req)\n`;
-          code += `\tif err != nil {\n\t\tpanic(err)\n\t}\n`;
-          code += `\tdefer resp.Body.Close()\n`;
-          code += `\tfmt.Println("response Status:", resp.Status)\n`;
-        }
-      }
+    const baseUrl = context.spec.servers?.[0]?.url || 'https://api.example.com';
+    let code = `package main\n\nimport (\n\t"bytes"\n\t"fmt"\n\t"net/http"\n\t"os"\n)\n\nfunc main() {\n\tapiKey := os.Getenv("API_KEY")\n\tclient := &http.Client{}\n`;
+    for (const { path, method, operation } of operationsFor(context)) {
+      const payload = this.body(operation);
+      code += `\t// ${operation.summary || `${method.toUpperCase()} ${path}`}\n`;
+      code += `\turl := ${goString(`${baseUrl}${path}`)}\n`;
+      code += `\treq, err := http.NewRequest(${goString(method.toUpperCase())}, url, bytes.NewBufferString(${goString(payload)}))\n`;
+      code += `\tif err != nil { panic(err) }\n\treq.Header.Set("Authorization", "Bearer "+apiKey)\n\treq.Header.Set("Content-Type", "application/json")\n`;
+      code += `\tresp, err := client.Do(req)\n\tif err != nil { panic(err) }\n\tresp.Body.Close()\n\tfmt.Println(resp.Status)\n`;
     }
     code += `}\n`;
     return code.trim();
+  }
+
+  private body(operation: OpenApiOperation): string {
+    const props = requestProperties(operation);
+    return `{${Object.entries(props).map(([key, schema]) => `${JSON.stringify(key)}:${JSON.stringify(schemaExample(schema))}`).join(',')}}`;
   }
 }

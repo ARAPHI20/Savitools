@@ -45,8 +45,7 @@ export class MonitorGateway
         return;
       }
 
-      const suppliedToken =
-        client.handshake.auth?.token ?? client.handshake.query?.token;
+      const suppliedToken = client.handshake.auth?.token;
       let token = typeof suppliedToken === 'string' ? suppliedToken : undefined;
       if (!token && client.handshake.headers.cookie) {
         const cookieHeader = client.handshake.headers.cookie;

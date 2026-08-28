@@ -1,31 +1,26 @@
-import { CodeGenerator, GeneratorContext } from './types';
+import { CodeGenerator, GeneratorContext, operationsFor, parameterExample, requestProperties, schemaExample, OpenApiOperation } from './types';
+
+function pyLiteral(value: unknown): string {
+  return JSON.stringify(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 
 export class PythonGenerator implements CodeGenerator {
   generate(context: GeneratorContext): string {
-    const { spec, endpoint } = context;
-    const baseUrl = spec.servers?.[0]?.url || 'https://api.example.com';
-    let code = `import requests\n\n`;
-    code += `headers = { "Authorization": f"Bearer {API_KEY}" }\n\n`;
-
-    const paths = endpoint ? { [endpoint]: spec.paths[endpoint] } : spec.paths;
-
-    for (const [path, pathItem] of Object.entries(paths || {})) {
-      if (!pathItem) continue;
-      for (const [method, operation] of Object.entries(pathItem)) {
-        if (method === 'post') {
-          code += `# ${operation.summary || 'Operation'}\n`;
-          code += `payload = {\n`;
-          const props = operation.requestBody?.content?.['application/json']?.schema?.properties || {};
-          for (const [key, prop] of Object.entries(props)) {
-            const example = (prop as any).example || 'TODO';
-            code += `    "${key}": "${example}",\n`;
-          }
-          code += `}\n`;
-          code += `response = requests.post('${baseUrl}${path}', json=payload, headers=headers)\n`;
-          code += `print(response.json())\n\n`;
-        }
-      }
+    const baseUrl = context.spec.servers?.[0]?.url || 'https://api.example.com';
+    let code = `import os\nimport requests\n\nAPI_KEY = os.environ.get("API_KEY", "")\nheaders = {"Authorization": f"Bearer {API_KEY}"}\n\n`;
+    for (const { path, method, operation } of operationsFor(context)) {
+      const values = new Map((operation.parameters ?? []).map((parameter) => [parameter.name, parameterExample(parameter)]));
+      const resolvedPath = path.replace(/\{([^}]+)\}/g, (_, name) => String(values.get(name) ?? `{${name}}`));
+      const query = (operation.parameters ?? []).filter((parameter) => parameter.in === 'query');
+      const queryText = query.length ? `, params={${query.map((p) => `${pyLiteral(p.name)}: ${pyLiteral(values.get(p.name))}`).join(', ')}}` : '';
+      const bodyText = method === 'get' || method === 'head' || method === 'delete' ? '' : `, json=${this.body(operation)}`;
+      code += `# ${operation.summary || `${method.toUpperCase()} ${path}`}\n`;
+      code += `response = requests.${method}(${pyLiteral(`${baseUrl}${resolvedPath}`)}, headers=headers${queryText}${bodyText})\nprint(response.json())\n\n`;
     }
     return code.trim();
+  }
+
+  private body(operation: OpenApiOperation): string {
+    return `{${Object.entries(requestProperties(operation)).map(([key, schema]) => `${pyLiteral(key)}: ${pyLiteral(schemaExample(schema))}`).join(', ')}}`;
   }
 }

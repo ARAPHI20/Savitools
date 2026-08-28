@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Job, Worker } from 'bullmq';
 import { createHmac } from 'crypto';
+import { assertSafeWebhookDestination, MAX_WEBHOOK_REDIRECTS } from '../webhook/ssrf-guard';
 import { Resend } from 'resend';
 import { Repository } from 'typeorm';
 import { User } from '../auth/entities/user.entity';
@@ -23,6 +24,8 @@ import {
   NotificationJobData,
 } from './monitor.types';
 import { MonitorGateway } from './monitor.gateway';
+
+const REDIRECT_STATUS_CODES = new Set([301, 302, 303, 307, 308]);
 
 @Injectable()
 export class NotificationWorkerService
@@ -209,6 +212,9 @@ export class NotificationWorkerService
       throw new Error('No monitor webhook is configured');
     }
 
+    const destination = new URL(webhook.url);
+    await assertSafeWebhookDestination(destination);
+
     const body = JSON.stringify({
       id: alertEvent.id,
       watchId: alertEvent.watchId,
@@ -218,16 +224,28 @@ export class NotificationWorkerService
     const signature = createHmac('sha256', webhook.secret)
       .update(body)
       .digest('hex');
-    const response = await fetch(webhook.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-SaviTools-Signature': `sha256=${signature}`,
-      },
-      body,
-      redirect: 'error',
-      signal: AbortSignal.timeout(10_000),
-    });
+    let currentUrl = destination;
+    let response: Response;
+    for (let hop = 0; ; hop++) {
+      response = await fetch(currentUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-SaviTools-Signature': `sha256=${signature}`,
+        },
+        body,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!REDIRECT_STATUS_CODES.has(response.status)) break;
+      if (hop >= MAX_WEBHOOK_REDIRECTS) {
+        throw new Error('Too many webhook redirects');
+      }
+      const location = response.headers.get('location');
+      if (!location) break;
+      currentUrl = new URL(location, currentUrl);
+      await assertSafeWebhookDestination(currentUrl);
+    }
     if (!response.ok) {
       throw new Error(`Webhook returned HTTP ${response.status}`);
     }
