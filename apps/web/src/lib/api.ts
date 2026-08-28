@@ -890,3 +890,53 @@ export async function fetchSepSupport(domain: string) {
     `/federation/sep?domain=${encodeURIComponent(domain)}`,
   );
 }
+
+/* ─── Account Relationship Graph ───────────────────────────────────────── */
+
+export type GraphMode = 'signers' | 'offers' | 'payments' | 'all';
+
+export type GraphNodeType = 'account' | 'multisig' | 'anchor' | 'contract';
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: GraphNodeType;
+  metadata: Record<string, unknown>;
+}
+
+export type GraphRelationship =
+  | 'signs_for'
+  | 'co_signer'
+  | 'offer_match'
+  | 'payment';
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  relationship: GraphRelationship;
+  metadata: Record<string, unknown>;
+}
+
+export interface GraphResult {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  rootAccount: string;
+  depth: number;
+  mode: GraphMode;
+  nodeCount: number;
+  edgeCount: number;
+}
+
+export interface GraphQuery {
+  rootAccount: string;
+  depth: number;
+  mode: GraphMode;
+  network: 'testnet' | 'mainnet';
+}
+
+export async function buildAccountGraph(query: GraphQuery) {
+  return apiFetch<GraphResult>('/transaction/graph', {
+    method: 'POST',
+    body: JSON.stringify(query),
+  });
+}

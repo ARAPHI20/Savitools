@@ -59,4 +59,10 @@ export const tools = [
     description: 'Live DEX order book, spread analytics, and liquidity depth chart for any asset pair.',
     status: 'MVP' as const,
   },
+  {
+    href: '/inspector/graph',
+    label: 'Account Graph',
+    description: 'Visualize signer networks, offers, and payment relationships with an interactive force-directed graph.',
+    status: 'MVP' as const,
+  },
 ] as const;
