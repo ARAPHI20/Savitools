@@ -26,6 +26,17 @@ export class RefreshToken {
   @Column({ name: 'expires_at', type: 'timestamptz' })
   expiresAt!: Date;
 
+  /**
+   * Groups a refresh token with every token it was rotated into/from.
+   * Reuse of a consumed token revokes every row sharing this id.
+   */
+  @Column({ name: 'family_id', type: 'uuid' })
+  familyId!: string;
+
+  /** Set atomically when the token is consumed (rotated) or revoked. Null = still active. */
+  @Column({ name: 'revoked_at', type: 'timestamptz', nullable: true })
+  revokedAt!: Date | null;
+
   /** IP address from which the token was issued */
   @Column({ name: 'ip_address', type: 'varchar', nullable: true })
   ipAddress!: string | null;
