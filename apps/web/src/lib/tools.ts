@@ -59,4 +59,10 @@ export const tools = [
     description: 'Live DEX order book, spread analytics, and liquidity depth chart for any asset pair.',
     status: 'MVP' as const,
   },
+  {
+    href: '/contracts/events',
+    label: 'Contract Events',
+    description: 'Decode, filter, and replay Soroban contract events from raw ScVal XDR.',
+    status: 'MVP' as const,
+  },
 ] as const;

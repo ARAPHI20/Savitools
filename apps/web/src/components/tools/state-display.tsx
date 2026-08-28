@@ -693,3 +693,77 @@ export function MonitorConnectionErrorState({
     />
   );
 }
+
+export function ContractEventsSkeleton() {
+  return (
+    <div className="space-y-2" aria-busy="true" aria-label="Loading contract events">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="rounded-lg border border-border bg-background p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-5 w-20 rounded-full" />
+            <Skeleton className="h-5 w-28 rounded-full" />
+            <Skeleton className="h-3 w-16 ml-auto" />
+          </div>
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-3 w-1/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ContractEventsEmptyState({
+  onExample,
+}: {
+  onExample?: () => void;
+}) {
+  return (
+    <div className="flex h-full items-center justify-center text-center p-8">
+      <div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted/50 mx-auto mb-3 text-muted-foreground">
+          <Search className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <h3 className="text-sm font-medium text-foreground mb-1">No events loaded</h3>
+        <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+          Enter a Soroban contract ID to fetch its recent events. Every topic and value is
+          decoded from raw ScVal XDR into typed values you can read and filter.
+        </p>
+        <p className="text-[11px] text-muted-foreground/70 mt-3">
+          Soroban RPC keeps roughly 24 hours of events, so very old ledgers are unavailable.
+        </p>
+        {onExample && (
+          <button
+            type="button"
+            onClick={onExample}
+            className="mt-4 text-xs text-primary hover:underline"
+          >
+            Load an example contract
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ContractEventsNoMatchesState({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="flex h-full items-center justify-center text-center p-8">
+      <div>
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted/50 mx-auto mb-3 text-muted-foreground">
+          <FileQuestion className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <h3 className="text-sm font-medium text-foreground mb-1">No events match your filters</h3>
+        <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+          Every loaded event was filtered out. Loosen or remove a criterion to see them again.
+        </p>
+        <button
+          type="button"
+          onClick={onClear}
+          className="mt-4 text-xs text-primary hover:underline"
+        >
+          Clear all filters
+        </button>
+      </div>
+    </div>
+  );
+}
