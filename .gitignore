@@ -43,3 +43,6 @@ Thumbs.db
 
 # Docker
 *.env.docker
+
+# Local task tracking
+tasks/
