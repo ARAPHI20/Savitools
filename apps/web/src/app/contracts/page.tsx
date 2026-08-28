@@ -1,6 +1,7 @@
 import { SiteHeader } from '@/components/layout/site-header';
 import { ToolPageShell } from '@/components/tools/tool-page-shell';
 import { ContractsTool } from '@/components/tools/contracts-tool';
+import Link from 'next/link';
 import { Suspense } from 'react';
 
 export default function ContractsPage() {
@@ -11,6 +12,13 @@ export default function ContractsPage() {
         title="Contract Deployer"
         description="Upload a compiled Soroban WASM and deploy it to testnet."
       >
+        <p className="mb-4 text-sm text-muted-foreground">
+          Looking for what a deployed contract emits?{' '}
+          <Link href="/contracts/events" className="text-primary hover:underline">
+            Inspect its events
+          </Link>{' '}
+          — decoded from raw ScVal XDR, filterable, and replayable at your own webhook.
+        </p>
         <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
           <ContractsTool />
         </Suspense>
