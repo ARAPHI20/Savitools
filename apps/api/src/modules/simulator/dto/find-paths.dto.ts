@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   ValidateIf,
 } from 'class-validator';
 
@@ -41,7 +42,9 @@ export class FindPathsDto {
 
   @ApiProperty({ description: 'Amount of source asset (strict send) or destination asset (strict receive)' })
   @IsString()
-  @IsNotEmpty()
+  @Matches(/^(?:0|[1-9]\d{0,14})(?:\.\d{1,7})?$/, {
+    message: 'amount must be a positive decimal with at most 15 integer and 7 fractional digits',
+  })
   amount!: string;
 
   @ApiProperty({ enum: AssetType, description: 'Destination asset type' })

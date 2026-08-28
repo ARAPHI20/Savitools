@@ -48,7 +48,7 @@ describe('NotificationWorkerService', () => {
     });
     const signature = createHmac('sha256', secret).update(body).digest('hex');
     expect(fetchMock).toHaveBeenCalledWith(
-      webhook.url,
+      new URL(webhook.url),
       expect.objectContaining({
         body,
         headers: expect.objectContaining({
@@ -56,6 +56,42 @@ describe('NotificationWorkerService', () => {
         }),
       }),
     );
+  });
+
+  it('rejects a webhook that resolves to a private address', async () => {
+    const webhookRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue({
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({ url: 'https://internal.example/hook', secret: 'test-secret-at-least-sixteen' }),
+      }),
+    } as unknown as Repository<MonitorWebhook>;
+    const worker = createWorker(webhookRepository);
+    const fetchMock = jest.spyOn(global, 'fetch');
+    jest.spyOn(require('dns/promises'), 'lookup').mockResolvedValue([{ address: '127.0.0.1' }]);
+
+    await expect((worker as any).sendWebhook(alertEvent(), 'user-one')).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('revalidates redirect destinations before delivery', async () => {
+    const webhookRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue({
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({ url: 'https://example.com/hook', secret: 'test-secret-at-least-sixteen' }),
+      }),
+    } as unknown as Repository<MonitorWebhook>;
+    const worker = createWorker(webhookRepository);
+    jest.spyOn(require('dns/promises'), 'lookup').mockResolvedValue([{ address: '93.184.216.34' }]);
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ status: 302, ok: false, headers: new Headers({ location: 'https://example.com/next' }) } as Response)
+      .mockResolvedValueOnce({ status: 200, ok: true, headers: new Headers() } as Response);
+
+    await expect((worker as any).sendWebhook(alertEvent(), 'user-one')).resolves.toBeUndefined();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('includes the full event payload in email notifications', async () => {

@@ -31,27 +31,8 @@ export class SimulatorController {
   @ApiResponse({ status: 200, description: 'Payment paths found' })
   @ApiResponse({ status: 400, description: 'Invalid parameters or no paths found' })
   async findPaths(
-    @Query('direction') direction: string,
-    @Query('source_asset_type') source_asset_type: string,
-    @Query('source_asset_code') source_asset_code?: string,
-    @Query('source_asset_issuer') source_asset_issuer?: string,
-    @Query('amount') amount?: string,
-    @Query('destination_asset_type') destination_asset_type?: string,
-    @Query('destination_asset_code') destination_asset_code?: string,
-    @Query('destination_asset_issuer') destination_asset_issuer?: string,
-    @Query('network') network?: string,
+    @Query() dto: FindPathsDto,
   ) {
-    const dto: FindPathsDto = {
-      direction: direction as FindPathsDto['direction'],
-      source_asset_type: source_asset_type as FindPathsDto['source_asset_type'],
-      source_asset_code,
-      source_asset_issuer,
-      amount: amount ?? '1',
-      destination_asset_type: (destination_asset_type ?? 'native') as FindPathsDto['destination_asset_type'],
-      destination_asset_code,
-      destination_asset_issuer,
-      network: network as FindPathsDto['network'],
-    };
 
     const paths = await this.simulatorService.findPaths(dto);
     return { paths, direction: dto.direction };
