@@ -17,9 +17,10 @@ import {
   createHash,
   hkdfSync,
   randomBytes,
+  randomUUID,
 } from 'crypto';
 import { Resend } from 'resend';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   EMAIL_VERIFICATION_TTL_SECONDS,
@@ -176,10 +177,30 @@ export class AuthService {
       throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
     }
 
-    // Delete immediately — prevents a second use returning a valid token
-    await this.refreshTokensRepository.delete(stored.id);
+    // Atomically consume the token: flips revoked_at from NULL -> now() only
+    // if it is still NULL. The database serializes concurrent UPDATEs
+    // against the same row, so under a race exactly one caller can win this
+    // — the other gets affected === 0, indistinguishable from (and handled
+    // the same as) a replay of an already-used token.
+    const claim = await this.refreshTokensRepository.update(
+      { id: stored.id, revokedAt: IsNull() },
+      { revokedAt: new Date() },
+    );
 
-    const tokens = await this.issueSession(stored.user, ctx);
+    if (claim.affected !== 1) {
+      // The token was already consumed — by a concurrent winner or by a
+      // genuine replay. Either way, a second presentation of a used token
+      // means it may have been captured/duplicated: revoke the whole
+      // family so no descendant token can keep producing sessions.
+      this.logger.warn(`Refresh token reuse detected for family ${stored.familyId}`);
+      await this.refreshTokensRepository.update(
+        { familyId: stored.familyId },
+        { revokedAt: new Date() },
+      );
+      throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
+    }
+
+    const tokens = await this.issueSession(stored.user, ctx, stored.familyId);
     return { user: stored.user, tokens };
   }
 
@@ -193,7 +214,7 @@ export class AuthService {
 
   async listSessions(userId: string): Promise<RefreshToken[]> {
     return this.refreshTokensRepository.find({
-      where: { userId },
+      where: { userId, revokedAt: IsNull() },
       order: { createdAt: 'DESC' },
     });
   }
@@ -465,6 +486,7 @@ export class AuthService {
   private async issueSession(
     user: User,
     ctx: IssueSessionContext,
+    familyId?: string,
   ): Promise<SessionTokens> {
     const accessToken = this.jwtService.sign(
       { sub: user.id, email: user.email, emailVerified: user.emailVerified },
@@ -481,6 +503,8 @@ export class AuthService {
       this.refreshTokensRepository.create({
         userId: user.id,
         tokenHash: this.hashToken(refreshToken),
+        familyId: familyId ?? randomUUID(),
+        revokedAt: null,
         expiresAt,
         ipAddress: ctx.ipAddress ?? null,
         userAgent: ctx.userAgent ?? null,

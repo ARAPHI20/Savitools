@@ -938,5 +938,93 @@ export async function buildAccountGraph(query: GraphQuery) {
   return apiFetch<GraphResult>('/transaction/graph', {
     method: 'POST',
     body: JSON.stringify(query),
+/* ─── Contract Events ───────────────────────────────────────────────────── */
+
+export interface DecodedScVal {
+  type: string;
+  value: unknown;
+  raw: string;
+}
+
+export interface DecodedContractEvent {
+  id: string;
+  type: string;
+  ledger: number;
+  ledgerClosedAt: string;
+  pagingToken: string;
+  inSuccessfulContractCall: boolean;
+  txHash: string;
+  contractId: string | null;
+  topic: DecodedScVal[];
+  value: DecodedScVal;
+  matchedCriteria?: string[];
+}
+
+export interface ContractEventsResult {
+  events: DecodedContractEvent[];
+  latestLedger: number;
+  cursor: string;
+  count: number;
+}
+
+export interface ContractEventsQuery {
+  contractId: string;
+  network?: NetworkChoice;
+  startLedger?: number;
+  endLedger?: number;
+  cursor?: string;
+  limit?: number;
+  type?: 'contract' | 'system' | 'diagnostic';
+}
+
+export interface ReplayEventResult {
+  index: number;
+  eventId: string | null;
+  statusCode: number | null;
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+}
+
+export interface ReplaySummary {
+  delivered: number;
+  failed: number;
+  results: ReplayEventResult[];
+}
+
+export const CONTRACT_EVENTS_MAX_LIMIT = 200;
+
+export async function getContractEvents(query: ContractEventsQuery) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  });
+
+  return apiFetch<ContractEventsResult>(`/contracts/events?${params.toString()}`);
+}
+
+/**
+ * Server-side filtering. The UI filters locally via `lib/contract-events.ts`
+ * for instant feedback; this exists for programmatic consumers and to verify
+ * the two implementations agree.
+ */
+export async function filterContractEvents(
+  events: DecodedContractEvent[],
+  criteria: unknown[],
+) {
+  return apiFetch<{ events: DecodedContractEvent[]; count: number }>(
+    '/contracts/events/filter',
+    { method: 'POST', body: JSON.stringify({ events, criteria }) },
+  );
+}
+
+export async function replayContractEvents(
+  webhookUrl: string,
+  events: DecodedContractEvent[],
+  secret?: string,
+) {
+  return apiFetch<ReplaySummary>('/contracts/events/replay', {
+    method: 'POST',
+    body: JSON.stringify({ webhookUrl, events, ...(secret ? { secret } : {}) }),
   });
 }

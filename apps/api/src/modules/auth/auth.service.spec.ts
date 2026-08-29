@@ -13,8 +13,64 @@ function mockRepo() {
     find: jest.fn(),
     create: jest.fn((dto: Record<string, unknown>): Record<string, unknown> => ({ id: 'uuid-1', ...dto })),
     save: jest.fn(async (entity: unknown) => entity),
+    update: jest.fn(async () => ({ affected: 1 })),
     delete: jest.fn(async () => ({ affected: 1 })),
     remove: jest.fn(async (entity: unknown) => entity),
+  };
+}
+
+/**
+ * In-memory refresh_tokens table used to exercise the atomic
+ * consume-and-rotate logic under real (single-process, event-loop)
+ * concurrency, mirroring the WHERE revoked_at IS NULL semantics a
+ * Postgres UPDATE would enforce at the row-lock level.
+ */
+function fakeRefreshTokenTable(seed: Array<Record<string, unknown>>) {
+  const rows = new Map<string, Record<string, unknown>>(
+    seed.map((row) => [row.id as string, { ...row }]),
+  );
+  let counter = rows.size;
+
+  return {
+    _rows: rows,
+    create: jest.fn((dto: Record<string, unknown>) => ({
+      id: `rt-new-${++counter}`,
+      revokedAt: null,
+      ...dto,
+    })),
+    save: jest.fn(async (entity: Record<string, unknown>) => {
+      rows.set(entity.id as string, entity);
+      return entity;
+    }),
+    findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      for (const row of rows.values()) {
+        if (where.id !== undefined && row.id !== where.id) continue;
+        if (where.tokenHash !== undefined && row.tokenHash !== where.tokenHash) continue;
+        return { ...row };
+      }
+      return null;
+    }),
+    // Simulates `UPDATE ... WHERE id = :id AND revoked_at IS NULL` (or a
+    // family-wide revoke with no revokedAt condition) — synchronous
+    // check-then-set, exactly like a single atomic SQL statement.
+    update: jest.fn(
+      async (
+        criteria: { id?: string; familyId?: string; revokedAt?: unknown },
+        partial: Record<string, unknown>,
+      ) => {
+        let affected = 0;
+        for (const row of rows.values()) {
+          if (criteria.id !== undefined && row.id !== criteria.id) continue;
+          if (criteria.familyId !== undefined && row.familyId !== criteria.familyId) continue;
+          if ('revokedAt' in criteria && row.revokedAt !== null) continue;
+          Object.assign(row, partial);
+          affected++;
+        }
+        return { affected };
+      },
+    ),
+    delete: jest.fn(async () => ({ affected: 1 })),
+    find: jest.fn(async () => Array.from(rows.values())),
   };
 }
 
@@ -243,7 +299,7 @@ describe('AuthService', () => {
   // ─── refresh (rotation) ────────────────────────────────────────────────────
 
   describe('refresh', () => {
-    it('rotates tokens and deletes old token immediately', async () => {
+    it('rotates tokens and atomically consumes the old one', async () => {
       const { createHash } = require('crypto');
       const rawToken = 'raw-refresh-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -251,14 +307,20 @@ describe('AuthService', () => {
       refreshTokensRepo.findOne.mockResolvedValue({
         id: 'rt-1',
         tokenHash,
+        familyId: 'fam-1',
+        revokedAt: null,
         expiresAt: new Date(Date.now() + 3_600_000),
         user: { id: 'user-1', email: 'test@example.com', emailVerified: true },
       });
 
       const result = await service.refresh(rawToken);
 
-      // Token must be deleted before new one is issued — prevents reuse
-      expect(refreshTokensRepo.delete).toHaveBeenCalledWith('rt-1');
+      // Consumed via a conditional UPDATE guarded on revoked_at IS NULL,
+      // not a plain delete — this is what makes the consume atomic.
+      expect(refreshTokensRepo.update).toHaveBeenCalledWith(
+        { id: 'rt-1', revokedAt: expect.anything() },
+        { revokedAt: expect.any(Date) },
+      );
       expect(result.tokens.accessToken).toBe('mock-access-token');
       expect(result.tokens.refreshToken).toBeDefined();
       expect(result.user.id).toBe('user-1');
@@ -272,6 +334,8 @@ describe('AuthService', () => {
       refreshTokensRepo.findOne.mockResolvedValue({
         id: 'rt-2',
         tokenHash,
+        familyId: 'fam-2',
+        revokedAt: null,
         expiresAt: new Date(Date.now() - 1000),
         user: { id: 'user-1', email: 'test@example.com', emailVerified: true },
       });
@@ -284,23 +348,74 @@ describe('AuthService', () => {
       await expect(service.refresh('unknown')).rejects.toThrow(UnauthorizedException);
     });
 
-    it('using the same refresh token twice: second use returns 401', async () => {
-      const { createHash } = require('crypto');
-      const rawToken = 'once-use-only';
-      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    describe('with a real token store', () => {
+      function setup(rawToken: string, familyId = 'fam-1') {
+        const { createHash } = require('crypto');
+        const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+        const table = fakeRefreshTokenTable([
+          {
+            id: 'rt-3',
+            tokenHash,
+            familyId,
+            revokedAt: null,
+            userId: 'u1',
+            expiresAt: new Date(Date.now() + 3_600_000),
+            user: { id: 'u1', email: 'a@b.com', emailVerified: true },
+          },
+        ]);
+        const svc = new AuthService(
+          usersRepo as any,
+          table as any,
+          connectedAccountsRepo as any,
+          vaultKeysRepo as any,
+          jwt as any,
+          config as any,
+        );
+        return { svc, table };
+      }
 
-      refreshTokensRepo.findOne
-        .mockResolvedValueOnce({
-          id: 'rt-3',
-          tokenHash,
-          expiresAt: new Date(Date.now() + 3_600_000),
-          user: { id: 'u1', email: 'a@b.com', emailVerified: true },
-        })
-        // Second call returns null — token was deleted after first use
-        .mockResolvedValueOnce(null);
+      it('replay: using the same refresh token twice returns 401 the second time', async () => {
+        const { svc } = setup('once-use-only');
 
-      await service.refresh(rawToken); // first use — succeeds
-      await expect(service.refresh(rawToken)).rejects.toThrow(UnauthorizedException); // second — 401
+        await svc.refresh('once-use-only'); // first use — succeeds
+        await expect(svc.refresh('once-use-only')).rejects.toThrow(UnauthorizedException);
+      });
+
+      it('replay: reuse of a consumed token revokes the whole family, including the newly rotated token', async () => {
+        const { svc } = setup('replay-me');
+
+        const first = await svc.refresh('replay-me');
+        // Replay the original (already-rotated) token.
+        await expect(svc.refresh('replay-me')).rejects.toThrow(UnauthorizedException);
+
+        // The token issued to the legitimate caller during the first
+        // rotation must also be dead now — the whole family was revoked.
+        await expect(svc.refresh(first.tokens.refreshToken)).rejects.toThrow(
+          UnauthorizedException,
+        );
+      });
+
+      it('concurrent refresh: two simultaneous requests for the same token — exactly one succeeds', async () => {
+        const { svc, table } = setup('concurrent-token');
+
+        const [a, b] = await Promise.allSettled([
+          svc.refresh('concurrent-token'),
+          svc.refresh('concurrent-token'),
+        ]);
+
+        const fulfilled = [a, b].filter((r) => r.status === 'fulfilled');
+        const rejected = [a, b].filter((r) => r.status === 'rejected');
+
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+          UnauthorizedException,
+        );
+
+        // The original row must never be left NULL/reusable regardless of
+        // which caller "won" — it is atomically consumed exactly once.
+        expect(table._rows.get('rt-3')?.revokedAt).not.toBeNull();
+      });
     });
   });
 

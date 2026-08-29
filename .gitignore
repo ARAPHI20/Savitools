@@ -45,3 +45,5 @@ Thumbs.db
 *.env.docker
 
 apps/web/tsconfig.tsbuildinfo
+# Local task tracking
+tasks/
