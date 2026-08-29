@@ -200,6 +200,7 @@ Complete guides and API reference for integrating with SaviTools:
 - **Finding Payment Routes**: See [API Reference → Simulator](docs/api-reference.md#simulator-payment-paths--fees)
 - **Building Multi-Op Transactions**: See [API Reference → Composer](docs/api-reference.md#composer-transaction-building)
 - **Authentication & Security**: See [API Reference → Authentication](docs/api-reference.md#authentication)
+- **Bug Reports**: [https://github.com/Savitura/Savitools/issues](https://github.com/Savitura/Savitools/issues)
 
 ---
 
