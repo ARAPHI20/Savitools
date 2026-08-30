@@ -19,11 +19,13 @@ import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
 import { TransactionModule } from './modules/transaction/transaction.module';
 import { FederationModule } from './modules/federation/federation.module';
+import { TransactionModule } from './modules/transaction/transaction.module';
 import { DataSource } from 'typeorm';
 import { CreatePlaygroundHistory1784642239000 } from './database/migrations/1784642239000-create-playground-history';
 import { CreateLedgerMonitor1752926400000 } from './database/migrations/1752926400000-create-ledger-monitor';
 import { AddMonitorStateAlerts1785312000000 } from './database/migrations/1785312000000-add-monitor-state-alerts';
 import { AddAuthEnhancements1785398400000 } from './database/migrations/1785398400000-add-auth-enhancements';
+import { CreateGraphSnapshots1785600000000 } from './database/migrations/1785600000000-create-graph-snapshots';
 
 @Module({
   imports: [
@@ -51,6 +53,7 @@ import { AddAuthEnhancements1785398400000 } from './database/migrations/17853984
           CreatePlaygroundHistory1784642239000,
           AddMonitorStateAlerts1785312000000,
           AddAuthEnhancements1785398400000,
+          CreateGraphSnapshots1785600000000,
         ],
         migrationsRun: config.get<string>('RUN_MIGRATIONS') === 'true',
         logging: config.get<string>('NODE_ENV') === 'development',
@@ -70,6 +73,7 @@ import { AddAuthEnhancements1785398400000 } from './database/migrations/17853984
     InspectorModule,
     TransactionModule,
     FederationModule,
+    TransactionModule,
   ],
   controllers: [AppController],
   providers: [

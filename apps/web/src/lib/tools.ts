@@ -60,6 +60,9 @@ export const tools = [
     status: 'MVP' as const,
   },
   {
+    href: '/inspector/graph',
+    label: 'Account Graph',
+    description: 'Visualize signer networks, offers, and payment relationships with an interactive force-directed graph.',
     href: '/contracts/events',
     label: 'Contract Events',
     description: 'Decode, filter, and replay Soroban contract events from raw ScVal XDR.',
