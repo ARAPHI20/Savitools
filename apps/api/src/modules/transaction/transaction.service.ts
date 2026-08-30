@@ -1,9 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InspectorService, TransactionBreakdown } from '../inspector/inspector.service';
 
 @Injectable()
 export class TransactionService {
-  async inspect(hash: string) {
-    // TODO: fetch from Horizon, decode XDR, annotate operations
-    throw new NotFoundException(`Transaction ${hash} — implementation pending`);
+  constructor(private readonly inspectorService: InspectorService) {}
+
+  async inspect(
+    hash: string,
+    network: 'testnet' | 'mainnet' = 'testnet',
+  ): Promise<TransactionBreakdown> {
+    return this.inspectorService.inspectTransaction(hash, network);
   }
 }

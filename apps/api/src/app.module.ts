@@ -17,6 +17,7 @@ import { SimulatorModule } from './modules/simulator/simulator.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
+import { TransactionModule } from './modules/transaction/transaction.module';
 import { FederationModule } from './modules/federation/federation.module';
 import { DataSource } from 'typeorm';
 import { CreatePlaygroundHistory1784642239000 } from './database/migrations/1784642239000-create-playground-history';
@@ -67,6 +68,7 @@ import { AddAuthEnhancements1785398400000 } from './database/migrations/17853984
     WebhookModule,
     ComposerModule,
     InspectorModule,
+    TransactionModule,
     FederationModule,
   ],
   controllers: [AppController],
