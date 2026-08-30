@@ -17,6 +17,7 @@ import { SimulatorModule } from './modules/simulator/simulator.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { ComposerModule } from './modules/composer/composer.module';
 import { InspectorModule } from './modules/inspector/inspector.module';
+import { TransactionModule } from './modules/transaction/transaction.module';
 import { FederationModule } from './modules/federation/federation.module';
 import { TransactionModule } from './modules/transaction/transaction.module';
 import { DataSource } from 'typeorm';
@@ -70,6 +71,7 @@ import { CreateGraphSnapshots1785600000000 } from './database/migrations/1785600
     WebhookModule,
     ComposerModule,
     InspectorModule,
+    TransactionModule,
     FederationModule,
     TransactionModule,
   ],
