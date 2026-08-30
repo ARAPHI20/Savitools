@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -110,7 +111,13 @@ export class AuthService {
     });
 
     await this.usersRepository.save(user);
-    await this.sendVerificationEmail(user.email, verificationToken);
+
+    try {
+      await this.sendVerificationEmail(user.email, verificationToken);
+    } catch (error) {
+      await this.usersRepository.remove(user).catch(() => {});
+      throw error;
+    }
 
     return { userId: user.id, message: 'Check your email to verify your account.' };
   }
@@ -561,6 +568,8 @@ export class AuthService {
     email: string,
     token: string,
   ): Promise<void> {
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
     const webOrigin = this.configService.get<string>(
       'WEB_ORIGIN',
       'http://localhost:3000',
@@ -572,8 +581,11 @@ export class AuthService {
     );
 
     if (!this.resend) {
+      if (isProduction) {
+        throw new ServiceUnavailableException('Email delivery is unavailable');
+      }
       this.logger.warn(
-        `[email] RESEND_API_KEY not configured. Verification URL: ${verifyUrl}`,
+        '[email] RESEND_API_KEY not configured. Verification email was not sent.',
       );
       return;
     }
@@ -591,8 +603,12 @@ export class AuthService {
         `,
       });
     } catch (error) {
-      // Non-fatal: log and continue. The user can request a new verification email.
-      this.logger.error(`Failed to send verification email to ${email}: ${error}`);
+      this.logger.error(
+        `Failed to send verification email to ${email}: ${error instanceof Error ? error.message : error}`,
+      );
+      if (isProduction) {
+        throw new ServiceUnavailableException('Failed to deliver verification email');
+      }
     }
   }
 

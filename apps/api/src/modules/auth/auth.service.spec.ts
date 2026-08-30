@@ -1,10 +1,13 @@
 import {
   ConflictException,
   GoneException,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
+import { createHash } from 'crypto';
 import { AuthService } from './auth.service';
 
 function mockRepo() {
@@ -190,7 +193,7 @@ describe('AuthService', () => {
       );
     });
 
-    it('sets emailVerified=false and stores a verification token', async () => {
+    it('sets emailVerified=false and stores a verification token hash', async () => {
       usersRepo.findOne.mockResolvedValue(null);
       usersRepo.save.mockResolvedValue({ id: 'u3', email: 'a@b.com' });
 
@@ -201,6 +204,174 @@ describe('AuthService', () => {
           emailVerified: false,
           emailVerificationToken: expect.any(String),
           emailVerificationExpiresAt: expect.any(Date),
+        }),
+      );
+
+      const createArg = usersRepo.create.mock.calls[0][0] as {
+        emailVerificationToken: string;
+      };
+      // SHA-256 hex digest is 64 characters
+      expect(createArg.emailVerificationToken).toHaveLength(64);
+      expect(createArg.emailVerificationToken).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('never logs verification URLs or raw bearer tokens when RESEND_API_KEY is missing', async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.save.mockResolvedValue({ id: 'u4', email: 'dev@example.com' });
+
+      await service.register({ email: 'dev@example.com', password: 'password123' });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[email] RESEND_API_KEY not configured. Verification email was not sent.',
+      );
+
+      const allLoggedMessages = [
+        ...warnSpy.mock.calls.map((c) => String(c[0])),
+        ...logSpy.mock.calls.map((c) => String(c[0])),
+        ...errorSpy.mock.calls.map((c) => String(c[0])),
+      ];
+
+      for (const msg of allLoggedMessages) {
+        expect(msg).not.toContain('verify-email');
+        expect(msg).not.toContain('token=');
+      }
+
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it('fails closed in production when RESEND_API_KEY is missing and cleans up user record', async () => {
+      const prodConfig = {
+        getOrThrow: jest.fn((key: string) => {
+          if (key === 'JWT_SECRET') return 'test-secret';
+          if (key === 'ENCRYPTION_SECRET') return 'test-encryption-secret-32-bytes!!';
+          throw new Error(`Missing config key: ${key}`);
+        }),
+        get: jest.fn((key: string, defaultValue?: unknown) => {
+          if (key === 'NODE_ENV') return 'production';
+          if (key === 'RESEND_API_KEY') return undefined;
+          return defaultValue ?? undefined;
+        }),
+      };
+
+      const prodService = new AuthService(
+        usersRepo as any,
+        refreshTokensRepo as any,
+        connectedAccountsRepo as any,
+        vaultKeysRepo as any,
+        jwt as any,
+        prodConfig as any,
+      );
+
+      const createdUser = { id: 'u-prod', email: 'prod@example.com' };
+      usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.create.mockReturnValue(createdUser);
+      usersRepo.save.mockResolvedValue(createdUser);
+
+      await expect(
+        prodService.register({ email: 'prod@example.com', password: 'password123' }),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(usersRepo.remove).toHaveBeenCalledWith(createdUser);
+    });
+
+    it('fails closed in production when email delivery throws an error and cleans up user record', async () => {
+      const prodConfig = {
+        getOrThrow: jest.fn((key: string) => {
+          if (key === 'JWT_SECRET') return 'test-secret';
+          if (key === 'ENCRYPTION_SECRET') return 'test-encryption-secret-32-bytes!!';
+          throw new Error(`Missing config key: ${key}`);
+        }),
+        get: jest.fn((key: string, defaultValue?: unknown) => {
+          if (key === 'NODE_ENV') return 'production';
+          if (key === 'RESEND_API_KEY') return 're_123456';
+          return defaultValue ?? undefined;
+        }),
+      };
+
+      const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      const prodService = new AuthService(
+        usersRepo as any,
+        refreshTokensRepo as any,
+        connectedAccountsRepo as any,
+        vaultKeysRepo as any,
+        jwt as any,
+        prodConfig as any,
+      );
+
+      const mockSend = jest.fn().mockRejectedValue(new Error('Resend network outage'));
+      (prodService as any).resend = { emails: { send: mockSend } };
+
+      const createdUser = { id: 'u-prod-fail', email: 'prodfail@example.com' };
+      usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.create.mockReturnValue(createdUser);
+      usersRepo.save.mockResolvedValue(createdUser);
+
+      await expect(
+        prodService.register({ email: 'prodfail@example.com', password: 'password123' }),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(usersRepo.remove).toHaveBeenCalledWith(createdUser);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to send verification email to prodfail@example.com'),
+      );
+
+      for (const call of errorSpy.mock.calls) {
+        expect(String(call[0])).not.toContain('verify-email');
+        expect(String(call[0])).not.toContain('token=');
+      }
+
+      errorSpy.mockRestore();
+    });
+
+    it('succeeds in production when email delivery is available', async () => {
+      const prodConfig = {
+        getOrThrow: jest.fn((key: string) => {
+          if (key === 'JWT_SECRET') return 'test-secret';
+          if (key === 'ENCRYPTION_SECRET') return 'test-encryption-secret-32-bytes!!';
+          throw new Error(`Missing config key: ${key}`);
+        }),
+        get: jest.fn((key: string, defaultValue?: unknown) => {
+          if (key === 'NODE_ENV') return 'production';
+          if (key === 'RESEND_API_KEY') return 're_123456';
+          return defaultValue ?? undefined;
+        }),
+      };
+
+      const prodService = new AuthService(
+        usersRepo as any,
+        refreshTokensRepo as any,
+        connectedAccountsRepo as any,
+        vaultKeysRepo as any,
+        jwt as any,
+        prodConfig as any,
+      );
+
+      const mockSend = jest.fn().mockResolvedValue({ id: 'msg-1' });
+      (prodService as any).resend = { emails: { send: mockSend } };
+
+      const createdUser = { id: 'u-prod-ok', email: 'prodok@example.com' };
+      usersRepo.findOne.mockResolvedValue(null);
+      usersRepo.create.mockReturnValue(createdUser);
+      usersRepo.save.mockResolvedValue(createdUser);
+
+      const result = await prodService.register({
+        email: 'prodok@example.com',
+        password: 'password123',
+      });
+
+      expect(result.userId).toBe('u-prod-ok');
+      expect(mockSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'prodok@example.com',
+          subject: 'Verify your SaviTools email',
+          html: expect.stringContaining('/verify-email?token='),
         }),
       );
     });
@@ -240,6 +411,26 @@ describe('AuthService', () => {
         emailVerificationExpiresAt: new Date(Date.now() - 1000), // past
       });
       await expect(service.verifyEmail('tok')).rejects.toThrow(GoneException);
+    });
+
+    it('hashes the verification token with SHA-256 before searching in the repository', async () => {
+      const rawToken = 'super-secret-raw-verification-token';
+      const expectedHash = createHash('sha256').update(rawToken).digest('hex');
+
+      usersRepo.findOne.mockResolvedValue({
+        id: 'u1',
+        email: 'a@b.com',
+        emailVerified: false,
+        emailVerificationToken: expectedHash,
+        emailVerificationExpiresAt: new Date(Date.now() + 3_600_000),
+      });
+      usersRepo.save.mockImplementation(async (u: any) => u);
+
+      await service.verifyEmail(rawToken);
+
+      expect(usersRepo.findOne).toHaveBeenCalledWith({
+        where: { emailVerificationToken: expectedHash },
+      });
     });
   });
 
