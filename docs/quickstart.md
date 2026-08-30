@@ -402,4 +402,4 @@ For detailed endpoint docs, responses, and all parameters:
 
 ## Feedback
 
-Found an issue with this guide? [Report it on GitHub](https://github.com/GrantFox/Savitools/issues)
+Found an issue with this guide? [Report it on GitHub](https://github.com/Savitura/Savitools/issues)
