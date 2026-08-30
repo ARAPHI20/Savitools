@@ -34,7 +34,7 @@ export class User {
   @Column({ name: 'email_verified', type: 'boolean', default: false })
   emailVerified!: boolean;
 
-  /** Opaque random token sent in the verification email (null once used) */
+  /** SHA-256 hash of the opaque verification token sent in the email (null once used) */
   @Column({ name: 'email_verification_token', type: 'varchar', nullable: true })
   emailVerificationToken!: string | null;
 
