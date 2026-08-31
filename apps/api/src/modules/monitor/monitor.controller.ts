@@ -7,15 +7,19 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiCookieAuth,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
+import { CSV_BOM, toCsvRow } from '../../common/csv';
 import {
   AuthUser,
   CurrentUser,
@@ -24,6 +28,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AlertRuleDto, CreateWatchDto } from './dto/create-watch.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { RegisterWebhookDto } from './dto/register-webhook.dto';
+import { ExportEventsQueryDto } from './dto/export-events.dto';
+import { SearchEventsQueryDto } from './dto/search-events.dto';
 import { MonitorService } from './monitor.service';
 
 @ApiTags('monitor')
@@ -103,5 +109,70 @@ export class MonitorController {
     @Body() dto: RegisterWebhookDto,
   ) {
     return this.monitorService.registerWebhook(user.id, dto);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search watch events across the current user watches' })
+  @ApiQuery({ name: 'watchId', required: false })
+  @ApiQuery({ name: 'eventType', required: false, enum: ['transaction', 'payment', 'contract'] })
+  @ApiQuery({ name: 'q', required: false, description: 'Free-text search across event payloads' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date — events at or after this time' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date — events at or before this time' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  searchEvents(@CurrentUser() user: AuthUser, @Query() query: SearchEventsQueryDto) {
+    return this.monitorService.searchEvents(user.id, query);
+  }
+
+  @Get('search/export')
+  @ApiOperation({
+    summary: 'Export monitor search results as CSV (UTF-8 BOM, streamed in chunks)',
+  })
+  @ApiQuery({ name: 'watchId', required: false })
+  @ApiQuery({ name: 'eventType', required: false, enum: ['transaction', 'payment', 'contract'] })
+  @ApiQuery({ name: 'q', required: false, description: 'Free-text search across event payloads' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date — events at or after this time' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date — events at or before this time' })
+  async exportSearch(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ExportEventsQueryDto,
+    @Res() reply: FastifyReply,
+  ) {
+    reply.hijack();
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header(
+      'Content-Disposition',
+      'attachment; filename="monitor-search.csv"',
+    );
+    reply.raw.write(CSV_BOM);
+    reply.raw.write(
+      toCsvRow([
+        'event_type',
+        'occurred_at',
+        'amount',
+        'asset',
+        'from',
+        'to',
+        'transaction_hash',
+        'paging_token',
+        'watch_id',
+        'payload',
+      ]) + '\n',
+    );
+
+    try {
+      await this.monitorService.streamSearchEventsCsv(
+        user.id,
+        query,
+        (values) => {
+          reply.raw.write(toCsvRow(values) + '\n');
+        },
+        () => {
+          reply.raw.end();
+        },
+      );
+    } catch (err) {
+      reply.raw.end();
+    }
   }
 }

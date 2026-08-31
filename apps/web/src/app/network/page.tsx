@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Clock, Zap, Server } from 'lucide-react';
+import { Activity, BookOpen, Clock, Zap, Server } from 'lucide-react';
+import Link from 'next/link';
 
 export default function NetworkStatusPage() {
   const [network, setNetwork] = useState<'mainnet' | 'testnet'>('mainnet');
@@ -75,19 +76,28 @@ export default function NetworkStatusPage() {
           <h1 className="text-3xl font-bold tracking-tight">Network Status</h1>
           <p className="text-muted-foreground mt-1">Live health and fee metrics for the Stellar network.</p>
         </div>
-        <div className="flex bg-secondary p-1 rounded-lg">
-          <button 
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${network === 'mainnet' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            onClick={() => setNetwork('mainnet')}
+        <div className="flex items-center gap-3">
+          <Link
+            href="/docs/network"
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
           >
-            Mainnet
-          </button>
-          <button 
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${network === 'testnet' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-            onClick={() => setNetwork('testnet')}
-          >
-            Testnet
-          </button>
+            <BookOpen className="h-3.5 w-3.5" />
+            Usage docs
+          </Link>
+          <div className="flex bg-secondary p-1 rounded-lg">
+            <button 
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${network === 'mainnet' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setNetwork('mainnet')}
+            >
+              Mainnet
+            </button>
+            <button 
+              className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${network === 'testnet' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setNetwork('testnet')}
+            >
+              Testnet
+            </button>
+          </div>
         </div>
       </div>
 

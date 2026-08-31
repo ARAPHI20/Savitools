@@ -5,13 +5,14 @@ import {
   Activity,
   ArrowDownLeft,
   ArrowUpRight,
+  Download,
   ExternalLink,
   FileCode2,
   Pause,
   Play,
   RefreshCw,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, downloadCsv } from '@/lib/api';
 import { Paginated, Watch, WatchEvent } from './monitor-types';
 import {
   MonitorFeedSkeleton,
@@ -31,7 +32,27 @@ export function LiveFeed({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  const handleExportCsv = async () => {
+    if (!watch) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      // Same filters as the on-screen feed: the current watch, capped at the
+      // server's 10,000-row export limit (see Savitura/Savitools#147).
+      await downloadCsv(
+        `/monitor/search/export?watchId=${encodeURIComponent(watch.id)}&limit=10000`,
+        `monitor-${watch.publicKey.slice(0, 8)}.csv`,
+      );
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const loadHistory = useCallback(async (watchId: string) => {
     setHistoryLoading(true);
@@ -99,6 +120,25 @@ export function LiveFeed({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {exportError && (
+            <span className="text-[11px] text-red-500" title={exportError}>
+              Export failed
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            disabled={exporting}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-40"
+            title="Download event history as CSV (up to 10,000 rows)"
+          >
+            {exporting ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
           {historyError && (
             <button
               type="button"

@@ -725,6 +725,38 @@ export async function simulateFee(operations: number, network: string) {
   );
 }
 
+/* ─── CSV exports ───────────────────────────────────────────────────────── */
+
+/**
+ * Download a CSV export endpoint as a file (see Savitura/Savitools#147).
+ * Fetches with credentials so authenticated endpoints (e.g. monitor search)
+ * work, then triggers a browser download from the response body.
+ */
+export async function downloadCsv(
+  path: string,
+  filename: string,
+): Promise<void> {
+  const response = await fetch(`${API_URL}/v1${path}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    const message = Array.isArray(body.message)
+      ? body.message.join(", ")
+      : (body.message ?? response.statusText);
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 /* ─── Inspector ──────────────────────────────────────────────────────────── */
 
 export interface DecodedEffect {
