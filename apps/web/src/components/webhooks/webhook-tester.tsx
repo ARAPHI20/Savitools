@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { addRecentItem } from '@/lib/recent-items';
+import { useCommandPalette, ShortcutBadge } from '@/components/command-palette';
 import {
   Send,
   RotateCcw,
@@ -43,7 +45,7 @@ function formatTime(ts: number): string {
   });
 }
 
-function getStatusColor(status: number | null): string {
+function getStatusColor(status?: number | null): string {
   if (!status) return 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30';
   if (status >= 200 && status < 300)
     return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
@@ -53,6 +55,7 @@ function getStatusColor(status: number | null): string {
     return 'bg-amber-500/15 text-amber-400 border-amber-500/30';
   return 'bg-red-500/15 text-red-400 border-red-500/30';
 }
+
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -83,7 +86,7 @@ export function WebhookTester() {
   const [templates, setTemplates] = useState<WebhookTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
-
+  const { registerContextActions } = useCommandPalette();
   const [endpointUrl, setEndpointUrl] = useState('');
   const [method, setMethod] = useState<'POST' | 'PUT' | 'PATCH' | 'GET'>('POST');
   const [selectedEventType, setSelectedEventType] = useState('');
@@ -193,11 +196,25 @@ export function WebhookTester() {
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('');
           setSignature(hex);
-        });
+        })
+        .catch(() => setSignature(''));
     } catch {
       setSignature('');
     }
   }, [secret, payloadEditor, payloadValid]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
+        setEventDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleEventTypeSelect = (template: WebhookTemplate) => {
     setSelectedEventType(template.eventType);
@@ -205,7 +222,7 @@ export function WebhookTester() {
     setEventDropdownOpen(false);
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!endpointUrl) {
       setSendError('Please enter a target endpoint URL');
       return;
@@ -242,12 +259,22 @@ export function WebhookTester() {
         repeatIntervalMs,
       });
 
+      const lastEntry = Array.isArray(response) ? response[response.length - 1] : response;
       if (Array.isArray(response)) {
         setResultsList(response);
-        setResult(response[response.length - 1]);
+        setResult(lastEntry);
       } else {
         setResultsList([response]);
         setResult(response);
+      }
+
+      if (lastEntry) {
+        addRecentItem({
+          category: 'webhooks',
+          title: `Webhook: ${selectedEventType || 'custom.event'}`,
+          subtitle: `${endpointUrl} · ${lastEntry.responseStatus ? `HTTP ${lastEntry.responseStatus}` : 'Sent'}`,
+          href: '/webhooks',
+        });
       }
 
       await loadHistory();
@@ -257,7 +284,30 @@ export function WebhookTester() {
     } finally {
       setSending(false);
     }
-  };
+  }, [
+    endpointUrl,
+    payloadValid,
+    payloadEditor,
+    customHeaders,
+    selectedEventType,
+    secret,
+    method,
+    repeatCount,
+    repeatIntervalMs,
+    loadHistory,
+  ]);
+
+  useEffect(() => {
+    const unregister = registerContextActions({
+      actionLabel: 'Send Webhook Test',
+      runAction: () => {
+        if (endpointUrl && payloadValid && !sending) {
+          void handleSend();
+        }
+      },
+    });
+    return unregister;
+  }, [endpointUrl, payloadValid, sending, registerContextActions, handleSend]);
 
   const handleSaveTemplate = async () => {
     if (!templateNameInput.trim()) return;
@@ -414,10 +464,7 @@ export function WebhookTester() {
                   ? 'border-red-500/50 focus:ring-red-500'
                   : 'border-input focus:ring-primary',
               )}
-              placeholder="{
-  &quot;event&quot;: &quot;custom.event&quot;,
-  &quot;data&quot;: {}
-}"
+              placeholder="{&#10;  &quot;event&quot;: &quot;custom.event&quot;,&#10;  &quot;data&quot;: {}&#10;}"
             />
           </div>
         </div>
@@ -543,8 +590,9 @@ export function WebhookTester() {
 
         <button
           type="button"
-          onClick={handleSend}
+          onClick={() => void handleSend()}
           disabled={sending || !endpointUrl || !payloadValid}
+          title="Send Webhook (Cmd+Enter)"
           className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary py-3 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {sending ? (
@@ -552,6 +600,7 @@ export function WebhookTester() {
           ) : (
             <>
               <Send className="h-4 w-4" /> Send Webhook {repeatCount > 1 ? `(${repeatCount}x)` : ''}
+              <ShortcutBadge shortcut="Cmd+Enter" className="hidden sm:inline-flex bg-primary-foreground/20 text-primary-foreground border-transparent text-[9px]" />
             </>
           )}
         </button>
