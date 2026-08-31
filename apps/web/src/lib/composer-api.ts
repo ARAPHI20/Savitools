@@ -1,8 +1,8 @@
 import { apiFetch } from './api';
 
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 // Types mirroring the API DTOs
-// ---------------------------------------------------------------------------
+// -------------------------------------------------------------------------------
 
 export interface AssetInput {
   code: string;
@@ -59,12 +59,47 @@ export interface OperationManifestEntry {
   fields: OperationField[];
 }
 
-// ---------------------------------------------------------------------------
-// API wrappers
-// ---------------------------------------------------------------------------
+// Sequence types
 
+export interface SequenceSourceRef {
+  step: number;
+  field?: 'source' | 'destination';
+}
+
+export interface SequenceStepInput {
+  source: string | SequenceSourceRef;
+  operations: OperationInput[];
+  memo?: string;
+}
+
+export interface RunTransactionSequenceInput {
+  network?: 'testnet' | 'mainnet';
+  stopOnFailure: boolean;
+  steps: SequenceStepInput[];
+}
+
+export interface StepResult {
+  stepIndex: number;
+  sourceAccount: string;
+  status: 'success' | 'failed';
+  txHash: string | null;
+  nextSequence: number;
+  error?: string | null;
+  sequence?: number;
+  xdr?: string;
+}
+
+export interface SequenceRunResult {
+  id: string;
+  status: string;
+  results: StepResult[];
+}
+
+// -------------------------------------------------------------------------------
+ // API wrappers
+// -------------------------------------------------------------------------------
 export async function fetchOperations(): Promise<OperationManifestEntry[]> {
-  return apiFetch<OperationManifestEntry[]>('/composer/operations');
+  return apiFetch<OperationManifestEntry[]>'/composer/operations');
 }
 
 export async function buildTransaction(
@@ -107,4 +142,17 @@ export async function submitToHorizon(
   } catch (e) {
     return { success: false, error: String(e) };
   }
+}
+
+export async function runTransactionSequence(
+  input: RunTransactionSequenceInput,
+): Promise<SequenceRunResult> {
+  return apiFetch<SequenceRunResult>('/composer/sequence/run', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchTransactionSequenceRuns(): Promise<SequenceRunResult[]> {
+  return apiFetch<SequenceRunResult[]>('/composer/sequence');
 }
