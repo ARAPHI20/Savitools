@@ -12,23 +12,16 @@ import { addRecentItem } from '@/lib/recent-items';
 import { useCommandPalette } from '@/components/command-palette';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ComposerToolbar } from './composer-toolbar';
-import { OperationForm } from './operation-form';
-import { OperationList } from './operation-list';
 import { OperationPalette } from './operation-palette';
-import { SignSubmitDialog } from './sign-submit-dialog';
-import { SimulateResult } from './simulate-result';
+import { OperationList } from './operation-list';
+import { OperationForm } from './operation-form';
 import { XdrPreview } from './xdr-preview';
-import {
-  ErrorState,
-} from '../state-display';
-import {
-  ComposerOperationListSkeleton,
-  ComposerSimulateSkeleton,
-} from '../state-display';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { SimulateResult } from './simulate-result';
+import { SignSubmitDialog } from './sign-submit-dialog';
+import { BenchmarkPanel } from './benchmark-panel';
+import { ComposerOperationListSkeleton } from '../state-display';
+import { ErrorState } from '../state-display';
+import { Code2, Zap } from 'lucide-react';
 
 export interface ComposedOperation {
   id: string;
@@ -36,14 +29,9 @@ export interface ComposedOperation {
   fields: Record<string, unknown>;
 }
 
-let opCounter = 0;
-function newId() {
-  return `op-${++opCounter}-${Date.now()}`;
+function newId(): string {
+  return Math.random().toString(36).slice(2, 9);
 }
-
-// ---------------------------------------------------------------------------
-// Source account input
-// ---------------------------------------------------------------------------
 
 function SourceAccountInput({
   value,
@@ -65,20 +53,20 @@ function SourceAccountInput({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="G… (public key of the transaction source account)"
+        placeholder="G... (56-character Stellar public key)"
+        maxLength={56}
         className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-violet-500/50 focus:border-violet-500/50 transition-colors"
       />
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main Composer component
-// ---------------------------------------------------------------------------
-
 export function ComposerTool() {
   const { network } = useNetwork();
   const { registerContextActions } = useCommandPalette();
+
+  // Mode switcher: Builder vs Benchmark
+  const [mode, setMode] = useState<'build' | 'benchmark'>('build');
 
   // Remote manifest
   const [manifest, setManifest] = useState<OperationManifestEntry[]>([]);
@@ -229,6 +217,10 @@ export function ComposerTool() {
           void navigator.clipboard.writeText(submitResult.hash);
           return true;
         }
+        if (xdr) {
+          void navigator.clipboard.writeText(xdr);
+          return true;
+        }
         return false;
       },
       txHash: submitResult?.hash,
@@ -236,7 +228,6 @@ export function ComposerTool() {
 
     return unregister;
   }, [xdr, simLoading, submitResult?.hash, registerContextActions, handleSimulate]);
-
 
   const handleSignSubmitSuccess = (hash: string) => {
     setSubmitting(false);
@@ -262,105 +253,135 @@ export function ComposerTool() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Toolbar */}
-      <ComposerToolbar
-        xdr={xdr}
-        opCount={operations.length}
-        onSimulate={handleSimulate}
-        onSignSubmit={() => {
-          setSubmitResult(null);
-          setShowSignDialog(true);
-        }}
-        simulating={simLoading}
-        submitting={submitting}
-        submitResult={submitResult}
-      />
-
-      {/* Source account */}
-      <SourceAccountInput value={sourceAccount} onChange={setSourceAccount} />
-
-      {/* Optional memo */}
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="memo-input"
-          className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground"
-        >
-          Memo <span className="text-muted-foreground/40 font-normal normal-case">(optional)</span>
-        </label>
-        <input
-          id="memo-input"
-          type="text"
-          value={memo}
-          onChange={(e) => setMemo(e.target.value)}
-          placeholder="Transaction memo text"
-          maxLength={28}
-          className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-violet-500/50 focus:border-violet-500/50 transition-colors"
-        />
+      {/* Mode Switcher Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card border border-border/60 rounded-xl p-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">Transaction Composer</h1>
+          <p className="text-xs text-muted-foreground">Build, simulate, and benchmark Stellar transactions.</p>
+        </div>
+        <div className="flex bg-secondary p-1 rounded-lg">
+          <button
+            onClick={() => setMode('build')}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'build' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Code2 className="h-3.5 w-3.5" />
+            Builder
+          </button>
+          <button
+            onClick={() => setMode('benchmark')}
+            className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'benchmark' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            Benchmark
+          </button>
+        </div>
       </div>
 
-      {/* 3-column composer area */}
-      <div className="grid grid-cols-[200px_1fr_280px] gap-4 min-h-[400px]">
-        {/* Left — palette */}
-        <div className="rounded-xl border border-border/60 bg-card/30 p-3 overflow-hidden">
-          {manifestLoading ? (
-            <ComposerOperationListSkeleton />
-          ) : manifestError ? (
-            <ErrorState
-              title="Failed to load operations"
-              message={manifestError}
-              onRetry={loadManifest}
-              retryLabel="Reload manifest"
-              details={manifestError}
+      {mode === 'benchmark' ? (
+        <BenchmarkPanel xdr={xdr || ''} network={network} />
+      ) : (
+        <>
+          {/* Toolbar */}
+          <ComposerToolbar
+            xdr={xdr}
+            opCount={operations.length}
+            onSimulate={handleSimulate}
+            onSignSubmit={() => {
+              setSubmitResult(null);
+              setShowSignDialog(true);
+            }}
+            simulating={simLoading}
+            submitting={submitting}
+            submitResult={submitResult}
+          />
+
+          {/* Source account */}
+          <SourceAccountInput value={sourceAccount} onChange={setSourceAccount} />
+
+          {/* Optional memo */}
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="memo-input"
+              className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground"
+            >
+              Memo <span className="text-muted-foreground/40 font-normal normal-case">(optional)</span>
+            </label>
+            <input
+              id="memo-input"
+              type="text"
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="Transaction memo text"
+              maxLength={28}
+              className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-violet-500/50 focus:border-violet-500/50 transition-colors"
             />
-          ) : (
-            <OperationPalette operations={manifest} onAdd={handleAdd} />
+          </div>
+
+          {/* 3-column composer area */}
+          <div className="grid grid-cols-1 md:grid-cols-[200px_1fr_280px] gap-4 min-h-[400px]">
+            {/* Left — palette */}
+            <div className="rounded-xl border border-border/60 bg-card/30 p-3 overflow-hidden">
+              {manifestLoading ? (
+                <ComposerOperationListSkeleton />
+              ) : manifestError ? (
+                <ErrorState
+                  title="Failed to load operations"
+                  message={manifestError}
+                  onRetry={loadManifest}
+                  retryLabel="Reload manifest"
+                  details={manifestError}
+                />
+              ) : (
+                <OperationPalette operations={manifest} onAdd={handleAdd} />
+              )}
+            </div>
+
+            {/* Center — op list */}
+            <div className="rounded-xl border border-border/60 bg-card/30 p-4 overflow-y-auto">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                Transaction ({operations.length} op{operations.length !== 1 ? 's' : ''})
+              </p>
+              <OperationList
+                operations={operations}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onRemove={handleRemove}
+                onReorder={handleReorder}
+              />
+            </div>
+
+            {/* Right — form */}
+            <div className="rounded-xl border border-border/60 bg-card/30 p-4 overflow-y-auto">
+              <OperationForm
+                operation={selected}
+                manifest={manifest}
+                onChange={handleFieldChange}
+              />
+            </div>
+          </div>
+
+          {/* XDR preview */}
+          <XdrPreview xdr={xdr} loading={xdrBuilding} />
+
+          {/* Simulate result */}
+          <SimulateResult
+            result={simResult}
+            loading={simLoading}
+            error={simError}
+            onRetry={handleSimulate}
+          />
+
+          {/* Sign & Submit dialog */}
+          {showSignDialog && xdr && (
+            <SignSubmitDialog
+              xdr={xdr}
+              network={network}
+              onClose={() => setShowSignDialog(false)}
+              onSuccess={handleSignSubmitSuccess}
+              onError={handleSignSubmitError}
+            />
           )}
-        </div>
-
-        {/* Center — op list */}
-        <div className="rounded-xl border border-border/60 bg-card/30 p-4 overflow-y-auto">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-            Transaction ({operations.length} op{operations.length !== 1 ? 's' : ''})
-          </p>
-          <OperationList
-            operations={operations}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onRemove={handleRemove}
-            onReorder={handleReorder}
-          />
-        </div>
-
-        {/* Right — form */}
-        <div className="rounded-xl border border-border/60 bg-card/30 p-4 overflow-y-auto">
-          <OperationForm
-            operation={selected}
-            manifest={manifest}
-            onChange={handleFieldChange}
-          />
-        </div>
-      </div>
-
-      {/* XDR preview */}
-      <XdrPreview xdr={xdr} loading={xdrBuilding} />
-
-      {/* Simulate result */}
-      <SimulateResult
-        result={simResult}
-        loading={simLoading}
-        error={simError}
-        onRetry={handleSimulate}
-      />
-
-      {/* Sign & Submit dialog */}
-      {showSignDialog && xdr && (
-        <SignSubmitDialog
-          xdr={xdr}
-          network={network}
-          onClose={() => setShowSignDialog(false)}
-          onSuccess={handleSignSubmitSuccess}
-          onError={handleSignSubmitError}
-        />
+        </>
       )}
     </div>
   );

@@ -1,13 +1,10 @@
-import {
-  Injectable,
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException,
-  Logger,
-  Optional,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { MetricsService } from "../metrics/metrics.service";
+import { Injectable, BadRequestException, UnprocessableEntityException, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { execSync } from 'child_process';
 import {
   rpc,
   Keypair,
@@ -23,12 +20,24 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 
+export interface WasmMetadata {
+  wasmId: string;
+  contentHash: string;
+  filename: string;
+  size: number;
+  sha256: string;
+  uploadedAt: string;
+  source: 'file' | 'git' | 'url';
+}
+
 @Injectable()
 export class ContractsService {
   private readonly logger = new Logger(ContractsService.name);
   private readonly rpcServer: rpc.Server;
   private readonly deployer: Keypair;
   private readonly networkPassphrase: string;
+  private readonly wasmStore = new Map<string, { buffer: Buffer; metadata: WasmMetadata }>();
+  private readonly maxFileSize: number;
 
   constructor(
     private readonly configService: ConfigService,
@@ -63,6 +72,95 @@ export class ContractsService {
       (network.toLowerCase() === "mainnet" || network.toLowerCase() === "public"
         ? Networks.PUBLIC
         : Networks.TESTNET);
+
+    const configuredLimit = this.configService.get<string>('MAX_WASM_FILE_SIZE');
+    this.maxFileSize = configuredLimit ? parseInt(configuredLimit, 10) : 5 * 1024 * 1024; // default 5MB
+  }
+
+  async storeUploadedWasm(params: {
+    wasmBuffer: Buffer;
+    filename: string;
+    checksum?: string;
+    source?: 'file' | 'git' | 'url';
+  }): Promise<WasmMetadata> {
+    const { wasmBuffer, filename, checksum, source = 'file' } = params;
+
+    if (!wasmBuffer || wasmBuffer.length === 0) {
+      throw new BadRequestException('WASM file is empty');
+    }
+
+    if (wasmBuffer.length > this.maxFileSize) {
+      throw new BadRequestException(`WASM file exceeds maximum size of ${this.maxFileSize / (1024 * 1024)}MB`);
+    }
+
+    const calculatedSha256 = crypto.createHash('sha256').update(wasmBuffer).digest('hex');
+
+    if (checksum) {
+      if (checksum.toLowerCase() !== calculatedSha256.toLowerCase()) {
+        throw new UnprocessableEntityException(
+          `Checksum verification failed: expected ${checksum}, got ${calculatedSha256}`
+        );
+      }
+    }
+
+    const contentHash = hash(wasmBuffer).toString('hex');
+    const wasmId = `wasm_${contentHash.substring(0, 16)}`;
+
+    // Deduplicate: if contentHash already exists, return existing metadata
+    if (this.wasmStore.has(contentHash)) {
+      return this.wasmStore.get(contentHash)!.metadata;
+    }
+
+    const metadata: WasmMetadata = {
+      wasmId,
+      contentHash,
+      filename,
+      size: wasmBuffer.length,
+      sha256: calculatedSha256,
+      uploadedAt: new Date().toISOString(),
+      source,
+    };
+
+    this.wasmStore.set(contentHash, { buffer: wasmBuffer, metadata });
+    this.logger.log(`Stored WASM ${wasmId} (${metadata.size} bytes, sha256: ${calculatedSha256})`);
+
+    return metadata;
+  }
+
+  async fetchWasmFromGit(gitRepoUrl: string, artifactPath: string): Promise<Buffer> {
+    // Validate gitRepoUrl against basic SSRF or safe protocols
+    if (!gitRepoUrl.startsWith('https://') && !gitRepoUrl.startsWith('git://') && !gitRepoUrl.startsWith('git@')) {
+      throw new BadRequestException('Invalid Git repository URL protocol');
+    }
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'savitools-git-'));
+    try {
+      this.logger.log(`Cloning read-only Git repo ${gitRepoUrl} into ${tempDir}...`);
+      execSync(`git clone --depth 1 --no-checkout ${JSON.stringify(gitRepoUrl)} .`, {
+        cwd: tempDir,
+        timeout: 30000,
+        stdio: 'ignore',
+      });
+
+      // Sparse checkout artifact path
+      execSync(`git sparse-checkout init --cone`, { cwd: tempDir, stdio: 'ignore' });
+      execSync(`git sparse-checkout set ${JSON.stringify(artifactPath)}`, { cwd: tempDir, stdio: 'ignore' });
+      execSync(`git checkout`, { cwd: tempDir, stdio: 'ignore' });
+
+      const fullArtifactPath = path.join(tempDir, artifactPath);
+      if (!fs.existsSync(fullArtifactPath)) {
+        throw new NotFoundException(`WASM artifact not found at path ${artifactPath} in repository`);
+      }
+
+      return fs.readFileSync(fullArtifactPath);
+    } catch (err: any) {
+      if (err instanceof NotFoundException || err instanceof BadRequestException) throw err;
+      throw new BadRequestException(`Failed to fetch WASM from Git repository: ${err.message}`);
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+    }
   }
 
   async deploy(
@@ -73,8 +171,8 @@ export class ContractsService {
       throw new BadRequestException("WASM file is empty");
     }
 
-    if (wasmBuffer.length > 1024 * 1024) {
-      throw new BadRequestException("WASM file exceeds maximum size of 1MB");
+    if (wasmBuffer.length > this.maxFileSize) {
+      throw new BadRequestException(`WASM file exceeds maximum size of ${this.maxFileSize / (1024 * 1024)}MB`);
     }
 
     const scVals: xdr.ScVal[] = (constructorArgs ?? []).map((arg) =>
@@ -84,7 +182,7 @@ export class ContractsService {
     const wasmHashBytes = hash(wasmBuffer);
 
     this.logger.log(`Uploading WASM (${wasmBuffer.length} bytes)...`);
-    const uploadTxHash = await this.uploadWasm(wasmBuffer);
+    await this.uploadWasm(wasmBuffer);
 
     this.logger.log(
       `Creating contract from WASM hash ${wasmHashBytes.toString("hex")}...`,
@@ -96,6 +194,68 @@ export class ContractsService {
     return {
       contractId,
       wasmHash: wasmHashBytes.toString("hex"),
+      txHash: createTxHash,
+    };
+  }
+
+  async uploadWasmOnly(wasmBuffer: Buffer): Promise<{ wasmHash: string; size: number }> {
+    if (!wasmBuffer || wasmBuffer.length === 0) {
+      throw new BadRequestException('WASM file is empty');
+    }
+    if (wasmBuffer.length > 1024 * 1024) {
+      throw new BadRequestException('WASM file exceeds maximum size of 1MB');
+    }
+
+    // Check init auth / format basic validation (WASM magic header)
+    if (wasmBuffer.length < 4 || wasmBuffer.readUInt32LE(0) !== 0x6d736100) {
+      throw new BadRequestException('Invalid WASM format: missing magic header');
+    }
+
+    const wasmHashBytes = hash(wasmBuffer);
+    await this.uploadWasm(wasmBuffer);
+    return {
+      wasmHash: wasmHashBytes.toString('hex'),
+      size: wasmBuffer.length,
+    };
+  }
+
+  async deployConfigured(params: {
+    wasmBuffer: Buffer;
+    admin?: string;
+    salt?: string;
+    constructorArgs?: unknown[];
+  }): Promise<{ contractId: string; wasmHash: string; txHash: string }> {
+    const { wasmBuffer, admin, salt: customSalt, constructorArgs } = params;
+    if (!wasmBuffer || wasmBuffer.length === 0) {
+      throw new BadRequestException('WASM file is empty');
+    }
+
+    const scVals: xdr.ScVal[] = (constructorArgs ?? []).map((arg) => nativeToScVal(arg));
+    const wasmHashBytes = hash(wasmBuffer);
+
+    await this.uploadWasm(wasmBuffer);
+
+    let saltBuffer: Buffer;
+    if (customSalt) {
+      try {
+        saltBuffer = Buffer.from(customSalt, 'hex');
+        if (saltBuffer.length !== 32) {
+          saltBuffer = Keypair.random().xdrPublicKey().value();
+        }
+      } catch {
+        saltBuffer = Keypair.random().xdrPublicKey().value();
+      }
+    } else {
+      saltBuffer = Keypair.random().xdrPublicKey().value();
+    }
+
+    const creatorAddress = admin && StrKey.isValidEd25519PublicKey(admin) ? new Address(admin) : new Address(this.deployer.publicKey());
+    const contractId = this.computeContractIdWithAddress(creatorAddress, saltBuffer);
+    const createTxHash = await this.createCustomContractWithAddress(creatorAddress, wasmHashBytes, saltBuffer, scVals);
+
+    return {
+      contractId,
+      wasmHash: wasmHashBytes.toString('hex'),
       txHash: createTxHash,
     };
   }
@@ -148,6 +308,17 @@ export class ContractsService {
     return StrKey.encodeContract(preimageHash);
   }
 
+  private computeContractIdWithAddress(address: Address, salt: Buffer): string {
+    const preimage = xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+      new xdr.ContractIdPreimageFromAddress({
+        address: address.toScAddress(),
+        salt: salt,
+      }),
+    );
+    const preimageHash = hash(preimage.toXDR());
+    return StrKey.encodeContract(preimageHash);
+  }
+
   private async createContract(
     wasmHash: Buffer,
     salt: Buffer,
@@ -157,6 +328,16 @@ export class ContractsService {
       this.rpcServer.getAccount(this.deployer.publicKey()),
     );
     const address = new Address(this.deployer.publicKey());
+    return this.createCustomContractWithAddress(address, wasmHash, salt, constructorArgs);
+  }
+
+  private async createCustomContractWithAddress(
+    address: Address,
+    wasmHash: Buffer,
+    salt: Buffer,
+    constructorArgs: xdr.ScVal[],
+  ): Promise<string> {
+    const account = await this.rpcServer.getAccount(this.deployer.publicKey());
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -258,35 +439,26 @@ export class ContractsService {
     };
   }
 
-  /**
-   * Invoking arbitrary functions on arbitrary contracts with the deployer key would let
-   * any authorized caller drain or misuse the shared account. Both the contract and the
-   * function must appear in the configured allowlists; an unset allowlist denies
-   * everything rather than defaulting to open access.
-   */
-  private assertInvocationAllowed(
-    contractId: string,
-    functionName: string,
-  ): void {
-    const allowedContracts = this.parseAllowlist(
-      "CONTRACT_INVOKE_ALLOWED_CONTRACTS",
-    );
-    if (!allowedContracts.includes(contractId)) {
-      throw new ForbiddenException(
-        `Contract ${contractId} is not allowlisted for invocation`,
-      );
+  private assertInvocationAllowed(contractId: string, functionName: string): void {
+    const allowedContracts = this.configService.get<string>('CONTRACT_INVOKE_ALLOWED_CONTRACTS');
+    const allowedFunctions = this.configService.get<string>('CONTRACT_INVOKE_ALLOWED_FUNCTIONS');
+
+    if (!allowedContracts || !allowedFunctions) {
+      throw new ForbiddenException('Contract invocations are not permitted (allowlist not configured)');
     }
 
-    const allowedFunctions = this.parseAllowlist(
-      "CONTRACT_INVOKE_ALLOWED_FUNCTIONS",
-    );
+    const allowedFunctions = this.parseAllowlist('CONTRACT_INVOKE_ALLOWED_FUNCTIONS');
     if (!allowedFunctions.includes(functionName)) {
-      throw new ForbiddenException(
-        `Function "${functionName}" is not allowlisted for invocation`,
-      );
+      throw new ForbiddenException(`Function ${functionName} is not allowlisted for invocation`);
+    const contractsList = allowedContracts.split(',').map((c) => c.trim());
+    const functionsList = allowedFunctions.split(',').map((f) => f.trim());
+
+    if (!contractsList.includes(contractId) || !functionsList.includes(functionName)) {
+      throw new ForbiddenException('Contract or function is not allowlisted for invocation');
     }
   }
 
+  async getInfo(contractId: string): Promise<{ contractId: string; network: string; wasmHash?: string }> {
   private parseAllowlist(configKey: string): string[] {
     const raw = this.configService.get<string>(configKey, "");
     return raw
@@ -312,8 +484,20 @@ export class ContractsService {
       throw new BadRequestException("Invalid contract ID format");
     }
 
-    let wasmHashHex: string;
+    const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
+
     try {
+      const wasm = await this.rpcServer.getContractWasmByContractId(contractId);
+      const wasmHash = wasm ? hash(wasm).toString('hex') : undefined;
+
+      return {
+        contractId,
+        network,
+        wasmHash,
+      };
+    } catch (err) {
+      throw new NotFoundException(`Contract ${contractId} not found on network ${network}`);
+    }
       const wasm = await this.timeRpc("get_contract_wasm", () =>
         this.rpcServer.getContractWasmByContractId(contractId),
       );

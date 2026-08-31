@@ -470,28 +470,42 @@ export interface WebhookSendRequest {
   eventType: string;
   payload?: Record<string, unknown>;
   secret?: string;
+  method?: string;
+  headers?: Record<string, string>;
+  repeatCount?: number;
+  repeatIntervalMs?: number;
 }
 
 export interface WebhookHistoryEntry {
   id: string;
   eventType: string;
   endpointUrl: string;
+  method?: string;
   payload: Record<string, unknown>;
   requestHeaders: Record<string, string>;
-  statusCode: number | null;
+  statusCode?: number | null;
+  responseStatus?: number | null;
   responseHeaders: Record<string, string>;
-  responseBody: unknown;
+  responseBody: any;
   latencyMs: number;
   timestamp: number;
   error?: string;
+  repeatIndex?: number;
 }
 
 export async function fetchWebhookTemplates() {
   return apiFetch<WebhookTemplate[]>("/webhooks/templates");
 }
 
+export async function saveWebhookTemplate(template: WebhookTemplate) {
+  return apiFetch<WebhookTemplate>("/webhooks/templates", {
+    method: "POST",
+    body: JSON.stringify(template),
+  });
+}
+
 export async function sendWebhook(dto: WebhookSendRequest) {
-  return apiFetch<WebhookHistoryEntry>("/webhooks/send", {
+  return apiFetch<WebhookHistoryEntry | WebhookHistoryEntry[]>("/webhooks/send", {
     method: "POST",
     body: JSON.stringify(dto),
   });
@@ -506,6 +520,7 @@ export async function replayWebhook(id: string) {
     method: "POST",
   });
 }
+
 /* ─── Wallet ─────────────────────────────────────────────────────────────── */
 
 export interface GenerateKeypairResult {
