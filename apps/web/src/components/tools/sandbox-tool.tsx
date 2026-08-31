@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Keypair } from '@stellar/stellar-sdk';
 import { addRecentItem } from '@/lib/recent-items';
 import { useCommandPalette, ShortcutBadge } from '@/components/command-palette';
@@ -26,6 +26,7 @@ import {
   type Balance,
 } from '@/lib/api';
 import { useNetwork } from '@/lib/network-context';
+import { clearSecretString, randomBytes, zeroBuffer } from '@/lib/secure-memory';
 import {
   SandboxAccountSkeleton,
   ErrorState,
@@ -93,6 +94,44 @@ export function SandboxTool() {
         secretKey: pair.secret(),
       };
       setKeypair(newPair);
+  // Security: hold a ref to the latest generated secret so we can drop it
+  // from memory when the component unmounts (see Savitura/Savitools#145). JS
+  // strings are immutable, so clearing the reference is the best we can do
+  // here — the entropy seed itself was already zeroed at generation time.
+  const secretRef = useRef<string | null>(null);
+  useEffect(() => {
+    return () => {
+      if (secretRef.current) clearSecretString(secretRef.current);
+      secretRef.current = null;
+    };
+  }, []);
+
+  const handleGenerateKeypair = () => {
+    setGenerating(true);
+    try {
+      // Generate the seed ourselves so the entropy buffer can be zeroed after
+      // use. `Keypair.random()` hides its internal buffer, so we use the
+      // `crypto.getRandomValues` return-buffer pattern instead (see
+      // Savitura/Savitools#145): derive the keypair from our own seed, then
+      // wipe the seed bytes so they are not left in the JS heap for GC.
+      const seed = randomBytes(32);
+      // The SDK accepts a Buffer-like seed and copies it internally, so we can
+      // pass our zeroable Uint8Array directly (its type signature says Buffer,
+      // but any byte view works — see Keypair constructor in stellar-sdk).
+      const pair = Keypair.fromRawEd25519Seed(
+        seed as unknown as Buffer,
+      );
+      const publicKey = pair.publicKey();
+      const secretKey = pair.secret();
+      zeroBuffer(seed);
+
+      // Drop the previous keypair's secret references before storing the new
+      // one, so the old secret can be garbage-collected promptly.
+      if (keypair?.secretKey && secretRef.current === keypair.secretKey) {
+        clearSecretString(keypair.secretKey);
+      }
+      setKeypair({ publicKey, secretKey });
+      secretRef.current = secretKey;
       setRevealed(false);
       setFundResult(null);
       addRecentItem({

@@ -10,6 +10,7 @@ export default function ComposerPage() {
       <ToolPageShell
         title="Transaction Composer"
         description="Visual builder for multi-operation Stellar transactions."
+        docsHref="/docs/composer"
       >
         <ErrorBoundary toolName="Composer">
           <ComposerTool />

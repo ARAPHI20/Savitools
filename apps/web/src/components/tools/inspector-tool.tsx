@@ -2,6 +2,7 @@
 
 import {
   decodeXdr,
+  downloadCsv,
   getAccountTransactions,
   inspectTransaction,
   type TransactionBreakdown,
@@ -20,6 +21,7 @@ import {
   ChevronUp,
   Code2,
   Copy,
+  Download,
   ExternalLink,
   Loader2,
   Search,
@@ -186,6 +188,23 @@ function TxBreakdown({ data, onInspectInComposer }: {
 }) {
   const { copied, copy } = useCopy();
   const [rawOpen, setRawOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await downloadCsv(
+        `/inspector/tx/${encodeURIComponent(data.hash)}/export?network=${data.network}`,
+        `transaction-${data.hash.slice(0, 12)}.csv`,
+      );
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const horizonUrl = data.network === 'mainnet'
     ? `https://horizon.stellar.org/transactions/${data.hash}`
@@ -217,6 +236,20 @@ function TxBreakdown({ data, onInspectInComposer }: {
                 Inspect in Composer
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={exporting}
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md border border-border hover:border-foreground/30 transition-colors disabled:opacity-40"
+              title="Download this transaction breakdown as CSV"
+            >
+              {exporting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
             {data.ledger > 0 && (
               <a
                 href={horizonUrl}
@@ -246,6 +279,9 @@ function TxBreakdown({ data, onInspectInComposer }: {
             </>
           )}
         </div>
+        {exportError && (
+          <p className="text-xs text-red-500 mt-3">Export failed: {exportError}</p>
+        )}
       </div>
 
       {/* Operations */}
