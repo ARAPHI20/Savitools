@@ -19,6 +19,7 @@ import { ComposerModule } from "./modules/composer/composer.module";
 import { InspectorModule } from "./modules/inspector/inspector.module";
 import { TransactionModule } from "./modules/transaction/transaction.module";
 import { FederationModule } from "./modules/federation/federation.module";
+import { MetricsModule } from "./modules/metrics/metrics.module";
 import { DataSource } from "typeorm";
 import { CreatePlaygroundHistory1784642239000 } from "./database/migrations/1784642239000-create-playground-history";
 import { CreateLedgerMonitor1752926400000 } from "./database/migrations/1752926400000-create-ledger-monitor";
@@ -72,6 +73,7 @@ import { CreateGraphSnapshots1785600000000 } from "./database/migrations/1785600
     InspectorModule,
     TransactionModule,
     FederationModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [

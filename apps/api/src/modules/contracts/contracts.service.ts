@@ -18,7 +18,7 @@ import {
   Address,
   StrKey,
   xdr,
-} from '@stellar/stellar-sdk';
+} from "@stellar/stellar-sdk";
 
 export interface WasmMetadata {
   wasmId: string;
@@ -39,26 +39,37 @@ export class ContractsService {
   private readonly wasmStore = new Map<string, { buffer: Buffer; metadata: WasmMetadata }>();
   private readonly maxFileSize: number;
 
-  constructor(private readonly configService: ConfigService) {
-    const rpcUrl = this.configService.getOrThrow<string>('STELLAR_RPC_URL');
-    const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
-    
-    const isProduction = this.configService.get<string>('NODE_ENV') === 'production' || 
-                         network.toLowerCase() === 'mainnet' || 
-                         network.toLowerCase() === 'public';
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional() private readonly metricsService?: MetricsService,
+  ) {
+    const rpcUrl = this.configService.getOrThrow<string>("STELLAR_RPC_URL");
+    const network = this.configService.get<string>(
+      "STELLAR_NETWORK",
+      "testnet",
+    );
 
-    if (isProduction && rpcUrl.startsWith('http://')) {
-      throw new Error('Plaintext RPC (http) is not allowed for production signing');
+    const isProduction =
+      this.configService.get<string>("NODE_ENV") === "production" ||
+      network.toLowerCase() === "mainnet" ||
+      network.toLowerCase() === "public";
+
+    if (isProduction && rpcUrl.startsWith("http://")) {
+      throw new Error(
+        "Plaintext RPC (http) is not allowed for production signing",
+      );
     }
 
     this.rpcServer = new rpc.Server(rpcUrl, { allowHttp: !isProduction });
 
-    const secretKey = this.configService.getOrThrow<string>('DEPLOYER_SECRET_KEY');
+    const secretKey = this.configService.getOrThrow<string>(
+      "DEPLOYER_SECRET_KEY",
+    );
     this.deployer = Keypair.fromSecret(secretKey);
 
     this.networkPassphrase =
-      this.configService.get<string>('STELLAR_NETWORK_PASSPHRASE') ||
-      (network.toLowerCase() === 'mainnet' || network.toLowerCase() === 'public'
+      this.configService.get<string>("STELLAR_NETWORK_PASSPHRASE") ||
+      (network.toLowerCase() === "mainnet" || network.toLowerCase() === "public"
         ? Networks.PUBLIC
         : Networks.TESTNET);
 
@@ -157,34 +168,40 @@ export class ContractsService {
     constructorArgs?: unknown[],
   ): Promise<{ contractId: string; wasmHash: string; txHash: string }> {
     if (!wasmBuffer || wasmBuffer.length === 0) {
-      throw new BadRequestException('WASM file is empty');
+      throw new BadRequestException("WASM file is empty");
     }
 
     if (wasmBuffer.length > this.maxFileSize) {
       throw new BadRequestException(`WASM file exceeds maximum size of ${this.maxFileSize / (1024 * 1024)}MB`);
     }
 
-    const scVals: xdr.ScVal[] = (constructorArgs ?? []).map((arg) => nativeToScVal(arg));
+    const scVals: xdr.ScVal[] = (constructorArgs ?? []).map((arg) =>
+      nativeToScVal(arg),
+    );
 
     const wasmHashBytes = hash(wasmBuffer);
 
     this.logger.log(`Uploading WASM (${wasmBuffer.length} bytes)...`);
     const uploadTxHash = await this.uploadWasm(wasmBuffer);
 
-    this.logger.log(`Creating contract from WASM hash ${wasmHashBytes.toString('hex')}...`);
+    this.logger.log(
+      `Creating contract from WASM hash ${wasmHashBytes.toString("hex")}...`,
+    );
     const salt = Keypair.random().xdrPublicKey().value();
     const contractId = this.computeContractId(salt);
     const createTxHash = await this.createContract(wasmHashBytes, salt, scVals);
 
     return {
       contractId,
-      wasmHash: wasmHashBytes.toString('hex'),
+      wasmHash: wasmHashBytes.toString("hex"),
       txHash: createTxHash,
     };
   }
 
   private async uploadWasm(wasmBuffer: Buffer): Promise<string> {
-    const account = await this.rpcServer.getAccount(this.deployer.publicKey());
+    const account = await this.timeRpc("get_account", () =>
+      this.rpcServer.getAccount(this.deployer.publicKey()),
+    );
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -194,17 +211,23 @@ export class ContractsService {
       .setTimeout(30)
       .build();
 
-    const prepared = await this.rpcServer.prepareTransaction(tx);
+    const prepared = await this.timeRpc("prepare_transaction", () =>
+      this.rpcServer.prepareTransaction(tx),
+    );
     prepared.sign(this.deployer);
 
-    const sendResult = await this.rpcServer.sendTransaction(prepared);
-    const result = await this.rpcServer.pollTransaction(sendResult.hash, {
-      attempts: 30,
-    });
+    const sendResult = await this.timeRpc("send_transaction", () =>
+      this.rpcServer.sendTransaction(prepared),
+    );
+    const result = await this.timeRpc("poll_transaction", () =>
+      this.rpcServer.pollTransaction(sendResult.hash, {
+        attempts: 30,
+      }),
+    );
 
     if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
       throw new BadRequestException(
-        `WASM upload failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? 'Transaction failed on ledger' : 'Transaction not found after polling'}`,
+        `WASM upload failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? "Transaction failed on ledger" : "Transaction not found after polling"}`,
       );
     }
 
@@ -228,7 +251,9 @@ export class ContractsService {
     salt: Buffer,
     constructorArgs: xdr.ScVal[],
   ): Promise<string> {
-    const account = await this.rpcServer.getAccount(this.deployer.publicKey());
+    const account = await this.timeRpc("get_account", () =>
+      this.rpcServer.getAccount(this.deployer.publicKey()),
+    );
     const address = new Address(this.deployer.publicKey());
 
     const tx = new TransactionBuilder(account, {
@@ -246,17 +271,23 @@ export class ContractsService {
       .setTimeout(30)
       .build();
 
-    const prepared = await this.rpcServer.prepareTransaction(tx);
+    const prepared = await this.timeRpc("prepare_transaction", () =>
+      this.rpcServer.prepareTransaction(tx),
+    );
     prepared.sign(this.deployer);
 
-    const sendResult = await this.rpcServer.sendTransaction(prepared);
-    const result = await this.rpcServer.pollTransaction(sendResult.hash, {
-      attempts: 30,
-    });
+    const sendResult = await this.timeRpc("send_transaction", () =>
+      this.rpcServer.sendTransaction(prepared),
+    );
+    const result = await this.timeRpc("poll_transaction", () =>
+      this.rpcServer.pollTransaction(sendResult.hash, {
+        attempts: 30,
+      }),
+    );
 
     if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
       throw new BadRequestException(
-        `Contract creation failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? 'Transaction failed on ledger' : 'Transaction not found after polling'}`,
+        `Contract creation failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? "Transaction failed on ledger" : "Transaction not found after polling"}`,
       );
     }
 
@@ -269,13 +300,15 @@ export class ContractsService {
     args: unknown[],
   ): Promise<{ result: unknown; txHash: string }> {
     if (!StrKey.isValidContract(contractId)) {
-      throw new BadRequestException('Invalid contract ID format');
+      throw new BadRequestException("Invalid contract ID format");
     }
 
     this.assertInvocationAllowed(contractId, functionName);
 
     const scVals: xdr.ScVal[] = args.map((arg) => nativeToScVal(arg));
-    const account = await this.rpcServer.getAccount(this.deployer.publicKey());
+    const account = await this.timeRpc("get_account", () =>
+      this.rpcServer.getAccount(this.deployer.publicKey()),
+    );
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -291,21 +324,31 @@ export class ContractsService {
       .setTimeout(30)
       .build();
 
-    const prepared = await this.rpcServer.prepareTransaction(tx);
+    const prepared = await this.timeRpc("prepare_transaction", () =>
+      this.rpcServer.prepareTransaction(tx),
+    );
     prepared.sign(this.deployer);
 
-    const sendResult = await this.rpcServer.sendTransaction(prepared);
-    const result = await this.rpcServer.pollTransaction(sendResult.hash, {
-      attempts: 30,
-    });
+    const sendResult = await this.timeRpc("send_transaction", () =>
+      this.rpcServer.sendTransaction(prepared),
+    );
+    const result = await this.timeRpc("poll_transaction", () =>
+      this.rpcServer.pollTransaction(sendResult.hash, {
+        attempts: 30,
+      }),
+    );
 
     if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+      this.metricsService?.recordContractInvocation(functionName, false);
       throw new BadRequestException(
-        `Invocation failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? 'Transaction failed on ledger' : 'Transaction not found after polling'}`,
+        `Invocation failed: ${result.status === rpc.Api.GetTransactionStatus.FAILED ? "Transaction failed on ledger" : "Transaction not found after polling"}`,
       );
     }
 
-    const returnValue = result.returnValue ? scValToNative(result.returnValue) : null;
+    const returnValue = result.returnValue
+      ? scValToNative(result.returnValue)
+      : null;
+    this.metricsService?.recordContractInvocation(functionName, true);
 
     return {
       result: returnValue,
@@ -330,8 +373,29 @@ export class ContractsService {
   }
 
   async getInfo(contractId: string): Promise<{ contractId: string; network: string; wasmHash?: string }> {
+  private parseAllowlist(configKey: string): string[] {
+    const raw = this.configService.get<string>(configKey, "");
+    return raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+
+  private timeRpc<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    return this.metricsService
+      ? this.metricsService.timeSorobanRpc(
+          operation,
+          this.configService.get<string>("STELLAR_NETWORK", "testnet"),
+          fn,
+        )
+      : fn();
+  }
+
+  async getInfo(
+    contractId: string,
+  ): Promise<{ contractId: string; wasmHash: string; network: string }> {
     if (!StrKey.isValidContract(contractId)) {
-      throw new BadRequestException('Invalid contract ID format');
+      throw new BadRequestException("Invalid contract ID format");
     }
 
     const network = this.configService.get<string>('STELLAR_NETWORK', 'testnet');
@@ -348,5 +412,18 @@ export class ContractsService {
     } catch (err) {
       throw new NotFoundException(`Contract ${contractId} not found on network ${network}`);
     }
+      const wasm = await this.timeRpc("get_contract_wasm", () =>
+        this.rpcServer.getContractWasmByContractId(contractId),
+      );
+      wasmHashHex = hash(wasm).toString("hex");
+    } catch {
+      throw new NotFoundException("Contract not found on the network");
+    }
+
+    return {
+      contractId,
+      wasmHash: wasmHashHex,
+      network: this.configService.get<string>("STELLAR_NETWORK", "testnet"),
+    };
   }
 }
