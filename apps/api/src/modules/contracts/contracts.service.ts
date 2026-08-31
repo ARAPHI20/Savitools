@@ -182,7 +182,7 @@ export class ContractsService {
     const wasmHashBytes = hash(wasmBuffer);
 
     this.logger.log(`Uploading WASM (${wasmBuffer.length} bytes)...`);
-    const uploadTxHash = await this.uploadWasm(wasmBuffer);
+    await this.uploadWasm(wasmBuffer);
 
     this.logger.log(
       `Creating contract from WASM hash ${wasmHashBytes.toString("hex")}...`,
@@ -194,6 +194,68 @@ export class ContractsService {
     return {
       contractId,
       wasmHash: wasmHashBytes.toString("hex"),
+      txHash: createTxHash,
+    };
+  }
+
+  async uploadWasmOnly(wasmBuffer: Buffer): Promise<{ wasmHash: string; size: number }> {
+    if (!wasmBuffer || wasmBuffer.length === 0) {
+      throw new BadRequestException('WASM file is empty');
+    }
+    if (wasmBuffer.length > 1024 * 1024) {
+      throw new BadRequestException('WASM file exceeds maximum size of 1MB');
+    }
+
+    // Check init auth / format basic validation (WASM magic header)
+    if (wasmBuffer.length < 4 || wasmBuffer.readUInt32LE(0) !== 0x6d736100) {
+      throw new BadRequestException('Invalid WASM format: missing magic header');
+    }
+
+    const wasmHashBytes = hash(wasmBuffer);
+    await this.uploadWasm(wasmBuffer);
+    return {
+      wasmHash: wasmHashBytes.toString('hex'),
+      size: wasmBuffer.length,
+    };
+  }
+
+  async deployConfigured(params: {
+    wasmBuffer: Buffer;
+    admin?: string;
+    salt?: string;
+    constructorArgs?: unknown[];
+  }): Promise<{ contractId: string; wasmHash: string; txHash: string }> {
+    const { wasmBuffer, admin, salt: customSalt, constructorArgs } = params;
+    if (!wasmBuffer || wasmBuffer.length === 0) {
+      throw new BadRequestException('WASM file is empty');
+    }
+
+    const scVals: xdr.ScVal[] = (constructorArgs ?? []).map((arg) => nativeToScVal(arg));
+    const wasmHashBytes = hash(wasmBuffer);
+
+    await this.uploadWasm(wasmBuffer);
+
+    let saltBuffer: Buffer;
+    if (customSalt) {
+      try {
+        saltBuffer = Buffer.from(customSalt, 'hex');
+        if (saltBuffer.length !== 32) {
+          saltBuffer = Keypair.random().xdrPublicKey().value();
+        }
+      } catch {
+        saltBuffer = Keypair.random().xdrPublicKey().value();
+      }
+    } else {
+      saltBuffer = Keypair.random().xdrPublicKey().value();
+    }
+
+    const creatorAddress = admin && StrKey.isValidEd25519PublicKey(admin) ? new Address(admin) : new Address(this.deployer.publicKey());
+    const contractId = this.computeContractIdWithAddress(creatorAddress, saltBuffer);
+    const createTxHash = await this.createCustomContractWithAddress(creatorAddress, wasmHashBytes, saltBuffer, scVals);
+
+    return {
+      contractId,
+      wasmHash: wasmHashBytes.toString('hex'),
       txHash: createTxHash,
     };
   }
@@ -246,6 +308,17 @@ export class ContractsService {
     return StrKey.encodeContract(preimageHash);
   }
 
+  private computeContractIdWithAddress(address: Address, salt: Buffer): string {
+    const preimage = xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+      new xdr.ContractIdPreimageFromAddress({
+        address: address.toScAddress(),
+        salt: salt,
+      }),
+    );
+    const preimageHash = hash(preimage.toXDR());
+    return StrKey.encodeContract(preimageHash);
+  }
+
   private async createContract(
     wasmHash: Buffer,
     salt: Buffer,
@@ -255,6 +328,16 @@ export class ContractsService {
       this.rpcServer.getAccount(this.deployer.publicKey()),
     );
     const address = new Address(this.deployer.publicKey());
+    return this.createCustomContractWithAddress(address, wasmHash, salt, constructorArgs);
+  }
+
+  private async createCustomContractWithAddress(
+    address: Address,
+    wasmHash: Buffer,
+    salt: Buffer,
+    constructorArgs: xdr.ScVal[],
+  ): Promise<string> {
+    const account = await this.rpcServer.getAccount(this.deployer.publicKey());
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -364,6 +447,9 @@ export class ContractsService {
       throw new ForbiddenException('Contract invocations are not permitted (allowlist not configured)');
     }
 
+    const allowedFunctions = this.parseAllowlist('CONTRACT_INVOKE_ALLOWED_FUNCTIONS');
+    if (!allowedFunctions.includes(functionName)) {
+      throw new ForbiddenException(`Function ${functionName} is not allowlisted for invocation`);
     const contractsList = allowedContracts.split(',').map((c) => c.trim());
     const functionsList = allowedFunctions.split(',').map((f) => f.trim());
 
