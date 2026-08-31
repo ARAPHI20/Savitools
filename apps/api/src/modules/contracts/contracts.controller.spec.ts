@@ -14,13 +14,23 @@ const OTHER_EMAIL = 'nobody@example.com';
 describe('ContractsController', () => {
   let app: NestFastifyApplication;
   let jwtService: JwtService;
-  let contractsService: jest.Mocked<Pick<ContractsService, 'deploy' | 'invoke' | 'getInfo'>>;
+  let contractsService: jest.Mocked<Pick<ContractsService, 'deploy' | 'invoke' | 'getInfo' | 'storeUploadedWasm' | 'fetchWasmFromGit'>>;
 
   beforeAll(async () => {
     contractsService = {
       deploy: jest.fn().mockResolvedValue({ contractId: 'C123', wasmHash: 'abc', txHash: 'tx' }),
       invoke: jest.fn().mockResolvedValue({ result: null, txHash: 'tx' }),
       getInfo: jest.fn(),
+      storeUploadedWasm: jest.fn().mockResolvedValue({
+        wasmId: 'wasm_123',
+        contentHash: 'abc',
+        filename: 'contract.wasm',
+        size: 10,
+        sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        uploadedAt: new Date().toISOString(),
+        source: 'file',
+      }),
+      fetchWasmFromGit: jest.fn().mockResolvedValue(Buffer.from('wasm-bytes')),
     };
 
     const configValues: Record<string, string> = {
@@ -85,6 +95,43 @@ describe('ContractsController', () => {
 
       expect(response.statusCode).toBe(403);
       expect(contractsService.deploy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /contracts/wasm/upload', () => {
+    it('rejects unauthenticated requests with 401', async () => {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/contracts/wasm/upload',
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('rejects authenticated but unauthorized requests with 403', async () => {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/contracts/wasm/upload',
+        headers: { authorization: `Bearer ${tokenFor(OTHER_EMAIL)}` },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('allows an authorized user to upload WASM', async () => {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: 'POST',
+        url: '/contracts/wasm/upload',
+        headers: { authorization: `Bearer ${tokenFor(ALLOWED_EMAIL)}` },
+        payload: {
+          gitRepoUrl: 'https://github.com/example/repo.git',
+          gitArtifactPath: 'contract.wasm',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(contractsService.fetchWasmFromGit).toHaveBeenCalled();
+      expect(contractsService.storeUploadedWasm).toHaveBeenCalled();
     });
   });
 
