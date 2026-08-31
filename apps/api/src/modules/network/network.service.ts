@@ -1,7 +1,14 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import * as StellarSdk from '@stellar/stellar-sdk';
-import { createClient, RedisClientType } from 'redis';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
+  Optional,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import * as StellarSdk from "@stellar/stellar-sdk";
+import { createClient, RedisClientType } from "redis";
+import { MetricsService } from "../metrics/metrics.service";
 
 export interface NetworkStatus {
   timestamp: number;
@@ -36,8 +43,10 @@ export class NetworkService implements OnModuleInit, OnModuleDestroy {
   private pollInterval: NodeJS.Timeout;
 
   private readonly servers = {
-    mainnet: new StellarSdk.Horizon.Server('https://horizon.stellar.org'),
-    testnet: new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org'),
+    mainnet: new StellarSdk.Horizon.Server("https://horizon.stellar.org"),
+    testnet: new StellarSdk.Horizon.Server(
+      "https://horizon-testnet.stellar.org",
+    ),
   };
 
   private readonly passphrases = {
@@ -45,25 +54,37 @@ export class NetworkService implements OnModuleInit, OnModuleDestroy {
     testnet: StellarSdk.Networks.TESTNET,
   };
 
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    @Optional() private readonly metricsService?: MetricsService,
+  ) {
+    this.metricsService?.setHorizonConnections("mainnet", 1);
+    this.metricsService?.setHorizonConnections("testnet", 1);
+    this.metricsService?.setRedisConnection("network_status", false);
+  }
 
   async onModuleInit() {
-    const redisUrl = this.configService.get<string>('REDIS_URL') || 'redis://localhost:6379';
+    const redisUrl =
+      this.configService.get<string>("REDIS_URL") || "redis://localhost:6379";
     this.redisClient = createClient({ url: redisUrl });
-    
-    this.redisClient.on('error', (err) => this.logger.error('Redis Client Error', err));
-    
+
+    this.redisClient.on("error", (err) =>
+      this.logger.error("Redis Client Error", err),
+    );
+
     try {
       await this.redisClient.connect();
-      this.logger.log('Connected to Redis for Network status polling');
-      
+      this.metricsService?.setRedisConnection("network_status", true);
+      this.logger.log("Connected to Redis for Network status polling");
+
       // Initial poll
       await this.pollAndStore();
-      
+
       // Poll every 60 seconds
       this.pollInterval = setInterval(() => this.pollAndStore(), 60000);
     } catch (err) {
-      this.logger.error('Failed to connect to Redis', err);
+      this.metricsService?.setRedisConnection("network_status", false);
+      this.logger.error("Failed to connect to Redis", err);
     }
   }
 
@@ -73,25 +94,28 @@ export class NetworkService implements OnModuleInit, OnModuleDestroy {
     }
     if (this.redisClient) {
       await this.redisClient.quit();
+      this.metricsService?.setRedisConnection("network_status", false);
     }
   }
 
-  async fetchCurrentStatus(network: 'mainnet' | 'testnet'): Promise<NetworkStatus> {
+  async fetchCurrentStatus(
+    network: "mainnet" | "testnet",
+  ): Promise<NetworkStatus> {
     const server = this.servers[network];
     const start = Date.now();
-    
+
     try {
       const [latestLedgersPage, feeStats] = await Promise.all([
-        server.ledgers().order('desc').limit(10).call(),
-        server.feeStats()
+        server.ledgers().order("desc").limit(10).call(),
+        server.feeStats(),
       ]);
-      
+
       const latency = Date.now() - start;
       const ledgers = latestLedgersPage.records;
       const latestLedger = ledgers[0];
       const closeTime = new Date(latestLedger.closed_at).getTime();
       const secondsSinceClose = Math.floor((Date.now() - closeTime) / 1000);
-      
+
       // Calculate average close time over last 10 ledgers
       let avgCloseTime = 0;
       if (ledgers.length > 1) {
@@ -121,7 +145,7 @@ export class NetworkService implements OnModuleInit, OnModuleDestroy {
             p50: parseInt(feeStats.fee_charged.p50),
             p90: parseInt(feeStats.fee_charged.p90),
             p99: parseInt(feeStats.fee_charged.p99),
-          }
+          },
         },
         latency,
       };
@@ -133,22 +157,22 @@ export class NetworkService implements OnModuleInit, OnModuleDestroy {
 
   async pollAndStore() {
     try {
-      for (const network of ['mainnet', 'testnet'] as const) {
+      for (const network of ["mainnet", "testnet"] as const) {
         const status = await this.fetchCurrentStatus(network);
         const redisKey = `network_history:${network}`;
-        
+
         // Add to the front of the list
         await this.redisClient.lPush(redisKey, JSON.stringify(status));
-        
+
         // Keep only the last 60 entries
         await this.redisClient.lTrim(redisKey, 0, 59);
       }
     } catch (error) {
-      this.logger.error('Error during pollAndStore', error);
+      this.logger.error("Error during pollAndStore", error);
     }
   }
 
-  async getHistory(network: 'mainnet' | 'testnet'): Promise<NetworkStatus[]> {
+  async getHistory(network: "mainnet" | "testnet"): Promise<NetworkStatus[]> {
     try {
       const redisKey = `network_history:${network}`;
       const results = await this.redisClient.lRange(redisKey, 0, -1);
