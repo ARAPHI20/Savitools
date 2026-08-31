@@ -135,285 +135,351 @@ export const OPERATION_MANIFEST = [
       { name: 'destAsset.code', label: 'Dest Asset', type: 'text', required: true, placeholder: 'USDC' },
       { name: 'destAsset.issuer', label: 'Dest Issuer', type: 'text', required: false, placeholder: 'G…' },
       { name: 'destMin', label: 'Dest Min', type: 'number', required: true, placeholder: '9.5' },
+      { name: 'path', label: 'Path Assets (JSON array)', type: 'text', required: false, placeholder: '[]' },
     ],
   },
   {
     type: 'path_payment_strict_receive',
     label: 'Path Payment (Strict Receive)',
-    description: 'Recipient gets exact amount; sender pays at most sendMax',
+    description: 'Recipient gets exact amount; send at most sendMax',
     fields: [
       { name: 'sendAsset.code', label: 'Send Asset', type: 'text', required: true, placeholder: 'XLM' },
       { name: 'sendAsset.issuer', label: 'Send Issuer', type: 'text', required: false, placeholder: 'G…' },
-      { name: 'sendMax', label: 'Send Max', type: 'number', required: true, placeholder: '15' },
+      { name: 'sendMax', label: 'Send Max', type: 'number', required: true, placeholder: '11' },
       { name: 'destination', label: 'Destination', type: 'text', required: true, placeholder: 'G…' },
       { name: 'destAsset.code', label: 'Dest Asset', type: 'text', required: true, placeholder: 'USDC' },
       { name: 'destAsset.issuer', label: 'Dest Issuer', type: 'text', required: false, placeholder: 'G…' },
       { name: 'destAmount', label: 'Dest Amount', type: 'number', required: true, placeholder: '10' },
+      { name: 'path', label: 'Path Assets (JSON array)', type: 'text', required: false, placeholder: '[]' },
     ],
   },
   {
     type: 'manage_data',
     label: 'Manage Data',
-    description: 'Set or delete an arbitrary key-value data entry',
+    description: 'Set, modify or delete a data entry on your account',
     fields: [
-      { name: 'name', label: 'Key', type: 'text', required: true, placeholder: 'my-key' },
-      { name: 'value', label: 'Value', type: 'text', required: false, placeholder: 'my-value (omit to delete)' },
+      { name: 'name', label: 'Data Name (up to 64 bytes)', type: 'text', required: true, placeholder: 'my-key' },
+      { name: 'value', label: 'Data Value (up to 64 bytes, empty to delete)', type: 'text', required: false, placeholder: 'my-value' },
     ],
   },
-] as const;
+];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function resolveAsset(dto: { code: string; issuer?: string }): Asset {
-  if (dto.code === 'native' || dto.code === 'XLM') return Asset.native();
-  if (!dto.issuer) throw new BadRequestException(`Asset ${dto.code} requires an issuer`);
-  return new Asset(dto.code, dto.issuer);
+interface CachedSimulation {
+  result: any;
+  expiresAt: number;
 }
-
-function buildOp(dto: OperationDto): ReturnType<typeof Operation.payment> {
-  switch (dto.type) {
-    case 'payment':
-      return Operation.payment({
-        destination: dto.destination,
-        asset: resolveAsset(dto.asset),
-        amount: dto.amount,
-      });
-
-    case 'create_account':
-      return Operation.createAccount({
-        destination: dto.destination,
-        startingBalance: dto.startingBalance,
-      });
-
-    case 'change_trust':
-      return Operation.changeTrust({
-        asset: resolveAsset(dto.asset) as Asset,
-        limit: dto.limit,
-      });
-
-    case 'manage_sell_offer':
-      return Operation.manageSellOffer({
-        selling: resolveAsset(dto.selling),
-        buying: resolveAsset(dto.buying),
-        amount: dto.amount,
-        price: { n: Number(dto.price.n), d: Number(dto.price.d) },
-        offerId: dto.offerId ?? '0',
-      });
-
-    case 'manage_buy_offer':
-      return Operation.manageBuyOffer({
-        selling: resolveAsset(dto.selling),
-        buying: resolveAsset(dto.buying),
-        buyAmount: dto.buyAmount,
-        price: { n: Number(dto.price.n), d: Number(dto.price.d) },
-        offerId: dto.offerId ?? '0',
-      });
-
-    case 'create_passive_sell_offer':
-      return Operation.createPassiveSellOffer({
-        selling: resolveAsset(dto.selling),
-        buying: resolveAsset(dto.buying),
-        amount: dto.amount,
-        price: { n: Number(dto.price.n), d: Number(dto.price.d) },
-      });
-
-    case 'set_options':
-      return Operation.setOptions({
-        inflationDest: dto.inflationDest,
-        clearFlags: dto.clearFlags as any,
-        setFlags: dto.setFlags as any,
-        masterWeight: dto.masterWeight,
-        lowThreshold: dto.lowThreshold,
-        medThreshold: dto.medThreshold,
-        highThreshold: dto.highThreshold,
-        homeDomain: dto.homeDomain,
-      });
-
-    case 'account_merge':
-      return Operation.accountMerge({ destination: dto.destination });
-
-    case 'allow_trust':
-      return Operation.allowTrust({
-        trustor: dto.trustor,
-        assetCode: dto.assetCode,
-        authorize: dto.authorize,
-      });
-
-    case 'path_payment_strict_send':
-      return Operation.pathPaymentStrictSend({
-        sendAsset: resolveAsset(dto.sendAsset),
-        sendAmount: dto.sendAmount,
-        destination: dto.destination,
-        destAsset: resolveAsset(dto.destAsset),
-        destMin: dto.destMin,
-        path: (dto.path ?? []).map(resolveAsset),
-      });
-
-    case 'path_payment_strict_receive':
-      return Operation.pathPaymentStrictReceive({
-        sendAsset: resolveAsset(dto.sendAsset),
-        sendMax: dto.sendMax,
-        destination: dto.destination,
-        destAsset: resolveAsset(dto.destAsset),
-        destAmount: dto.destAmount,
-        path: (dto.path ?? []).map(resolveAsset),
-      });
-
-    case 'manage_data':
-      return Operation.manageData({
-        name: dto.name,
-        value: dto.value ?? null,
-      });
-
-    default: {
-      const exhaustive: never = dto;
-      throw new BadRequestException(`Unknown operation type: ${(exhaustive as OperationDto).type}`);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Service
-// ---------------------------------------------------------------------------
 
 @Injectable()
 export class ComposerService {
   private readonly logger = new Logger(ComposerService.name);
+  private readonly simulationCache = new Map<string, CachedSimulation>();
+  private readonly MAX_CACHE_SIZE = 1000;
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   getOperations() {
     return OPERATION_MANIFEST;
   }
 
-  async buildTransaction(dto: BuildTransactionDto) {
-    const network = dto.network ?? 'testnet';
-    const networkPassphrase =
-      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
-
-    const horizonUrl =
+  private getHorizonServer(network: 'testnet' | 'mainnet' = 'testnet'): Horizon.Server {
+    const url =
       network === 'mainnet'
-        ? 'https://horizon.stellar.org'
-        : 'https://horizon-testnet.stellar.org';
+        ? process.env.STELLAR_HORIZON_MAINNET_URL || 'https://horizon.stellar.org'
+        : process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org';
+    return new Horizon.Server(url);
+  }
 
-    const server = new Horizon.Server(horizonUrl);
-
-    let account: Horizon.AccountResponse;
+  buildTransaction(dto: BuildTransactionDto) {
     try {
-      account = await server.loadAccount(dto.sourceAccount);
-    } catch {
-      throw new BadRequestException(
-        `Source account ${dto.sourceAccount} not found on ${network}`,
-      );
-    }
+      const networkPassphrase =
+        dto.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
 
-    let builder = new TransactionBuilder(account, {
-      fee: '100',
-      networkPassphrase,
-    });
+      const sourceAccount = new Horizon.Account(dto.sourceAccount, dto.sequenceNumber);
 
-    for (const opDto of dto.operations) {
-      try {
-        builder = builder.addOperation(buildOp(opDto));
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new BadRequestException(`Error building ${opDto.type}: ${message}`);
+      const builder = new TransactionBuilder(sourceAccount, {
+        fee: dto.fee,
+        networkPassphrase,
+      });
+
+      if (dto.timeBounds) {
+        builder.setTimeBounds({
+          minTime: dto.timeBounds.minTime,
+          maxTime: dto.timeBounds.maxTime,
+        });
       }
+
+      if (dto.memo) {
+        switch (dto.memo.type) {
+          case 'text':
+            builder.addMemo(Memo.text(dto.memo.value));
+            break;
+          case 'id':
+            builder.addMemo(Memo.id(dto.memo.value));
+            break;
+          case 'hash':
+            builder.addMemo(Memo.hash(dto.memo.value));
+            break;
+          case 'return':
+            builder.addMemo(Memo.return(dto.memo.value));
+            break;
+        }
+      }
+
+      for (const opDto of dto.operations) {
+        const op = this.mapOperation(opDto);
+        builder.addOperation(op);
+      }
+
+      const transaction = builder.setTimeout(30).build();
+      const xdr = transaction.toEnvelope().toXDR().toString('base64');
+      const hash = transaction.hash().toString('hex');
+
+      return {
+        xdr,
+        hash,
+        fee: dto.fee,
+        operationCount: dto.operations.length,
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(`Failed to build transaction: ${message}`);
     }
-
-    if (dto.memo) {
-      builder = builder.addMemo(Memo.text(dto.memo));
-    }
-
-    const tx = builder.setTimeout(180).build();
-
-    return {
-      xdr: tx.toXDR(),
-      hash: tx.hash().toString('hex'),
-      operations: dto.operations.length,
-      network,
-    };
   }
 
   async simulateTransaction(dto: SimulateTransactionDto) {
-    const network = dto.network ?? 'testnet';
-    const networkPassphrase =
-      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
-
-    let tx: Transaction;
     try {
-      tx = new Transaction(dto.xdr, networkPassphrase);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BadRequestException(`Invalid XDR: ${message}`);
-    }
+      const cacheKey = `${dto.network || 'testnet'}:${dto.xdr}`;
+      const now = Date.now();
+      const cached = this.simulationCache.get(cacheKey);
 
-    return {
-      success: true,
-      hash: tx.hash().toString('hex'),
-      fee: null,
-      resultCodes: null,
-      operationResults: null,
-      ledger: null,
-    };
+      if (cached) {
+        if (cached.expiresAt > now) {
+          // Refresh position in LRU (delete and re-set)
+          this.simulationCache.delete(cacheKey);
+          this.simulationCache.set(cacheKey, cached);
+          return cached.result;
+        } else {
+          this.simulationCache.delete(cacheKey);
+        }
+      }
+
+      let tx: Transaction;
+      try {
+        tx = new Transaction(dto.xdr, dto.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET);
+      } catch {
+        throw new BadRequestException('Invalid XDR');
+      }
+
+      const hash = tx.hash().toString('hex');
+
+      const result = {
+        success: true,
+        hash,
+        fee: null,
+        resultCodes: null,
+        operationResults: null,
+        ledger: null,
+      };
+
+      // Evict oldest entries if cache is at max capacity
+      if (this.simulationCache.size >= this.MAX_CACHE_SIZE) {
+        const oldestKey = this.simulationCache.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.simulationCache.delete(oldestKey);
+        }
+      }
+
+      this.simulationCache.set(cacheKey, {
+        result,
+        expiresAt: now + this.CACHE_TTL_MS,
+      });
+
+      return result;
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(`Simulation failed: ${message}`);
+    }
   }
 
   async sendTransaction(dto: SimulateTransactionDto) {
-    const network = dto.network ?? 'testnet';
-    const networkPassphrase =
-      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
-
-    const horizonUrl =
-      network === 'mainnet'
-        ? 'https://horizon.stellar.org'
-        : 'https://horizon-testnet.stellar.org';
-
-    let tx: Transaction;
     try {
-      tx = new Transaction(dto.xdr, networkPassphrase);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new BadRequestException(`Invalid XDR: ${message}`);
-    }
+      const tx = new Transaction(dto.xdr, dto.network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET);
+      const server = this.getHorizonServer(dto.network);
 
-    const server = new Horizon.Server(horizonUrl);
+      const response = await server.submitTransaction(tx);
 
-    try {
-      const result = await server.submitTransaction(tx);
       return {
         success: true,
-        hash: result.hash,
-        fee: (result as any).fee_charged,
+        hash: response.hash,
+        fee: response.fee_charged,
         resultCodes: null,
         operationResults: null,
-        ledger: result.ledger,
+        ledger: response.ledger,
       };
     } catch (err: unknown) {
-      const horizonErr = err as {
-        response?: {
-          data?: {
-            extras?: {
-              result_codes?: { transaction?: string; operations?: string[] };
-            };
-            result_xdr?: string;
-          };
-        };
-      };
-
-      const extras = horizonErr.response?.data?.extras;
-      const resultCodes = extras?.result_codes ?? null;
-      const txCode = resultCodes?.transaction ?? 'unknown';
-
-      this.logger.warn(`Transaction submission failed: ${txCode}`);
+      const errObj = err as any;
+      const resultCodes = errObj?.response?.data?.extras?.result_codes || null;
+      const operationResults = resultCodes?.operations || null;
+      const txCode = resultCodes?.transaction || (err instanceof Error ? err.message : 'Transaction failed');
 
       return {
         success: false,
         hash: null,
         fee: null,
         resultCodes: txCode,
-        operationResults: resultCodes?.operations ?? null,
+        operationResults,
         ledger: null,
       };
+    }
+  }
+
+  private mapOperation(dto: OperationDto): Operation.Operation {
+    switch (dto.type) {
+      case 'payment': {
+        const asset =
+          dto.asset.code === 'native' || !dto.asset.code
+            ? Asset.native()
+            : new Asset(dto.asset.code, dto.asset.issuer!);
+        return Operation.payment({
+          destination: dto.destination,
+          asset,
+          amount: dto.amount,
+        });
+      }
+      case 'create_account':
+        return Operation.createAccount({
+          destination: dto.destination,
+          startingBalance: dto.startingBalance,
+        });
+      case 'change_trust': {
+        const asset = new Asset(dto.asset.code, dto.asset.issuer!);
+        return Operation.changeTrust({
+          asset,
+          limit: dto.limit,
+        });
+      }
+      case 'manage_sell_offer': {
+        const selling =
+          dto.selling.code === 'native' || !dto.selling.code
+            ? Asset.native()
+            : new Asset(dto.selling.code, dto.selling.issuer!);
+        const buying =
+          dto.buying.code === 'native' || !dto.buying.code
+            ? Asset.native()
+            : new Asset(dto.buying.code, dto.buying.issuer!);
+        return Operation.manageSellOffer({
+          selling,
+          buying,
+          amount: dto.amount,
+          price: { n: Number(dto.price.n), d: Number(dto.price.d) },
+          offerId: dto.offerId ? Number(dto.offerId) : undefined,
+        });
+      }
+      case 'manage_buy_offer': {
+        const selling =
+          dto.selling.code === 'native' || !dto.selling.code
+            ? Asset.native()
+            : new Asset(dto.selling.code, dto.selling.issuer!);
+        const buying =
+          dto.buying.code === 'native' || !dto.buying.code
+            ? Asset.native()
+            : new Asset(dto.buying.code, dto.buying.issuer!);
+        return Operation.manageBuyOffer({
+          selling,
+          buying,
+          buyAmount: dto.buyAmount,
+          price: { n: Number(dto.price.n), d: Number(dto.price.d) },
+          offerId: dto.offerId ? Number(dto.offerId) : undefined,
+        });
+      }
+      case 'create_passive_sell_offer': {
+        const selling =
+          dto.selling.code === 'native' || !dto.selling.code
+            ? Asset.native()
+            : new Asset(dto.selling.code, dto.selling.issuer!);
+        const buying =
+          dto.buying.code === 'native' || !dto.buying.code
+            ? Asset.native()
+            : new Asset(dto.buying.code, dto.buying.issuer!);
+        return Operation.createPassiveSellOffer({
+          selling,
+          buying,
+          amount: dto.amount,
+          price: { n: Number(dto.price.n), d: Number(dto.price.d) },
+        });
+      }
+      case 'set_options':
+        return Operation.setOptions({
+          inflationDestination: dto.inflationDest,
+          clearFlags: dto.clearFlags,
+          setFlags: dto.setFlags,
+          masterWeight: dto.masterWeight,
+          lowThreshold: dto.lowThreshold,
+          medThreshold: dto.medThreshold,
+          highThreshold: dto.highThreshold,
+          homeDomain: dto.homeDomain,
+        });
+      case 'account_merge':
+        return Operation.accountMerge({
+          destination: dto.destination,
+        });
+      case 'allow_trust':
+        return Operation.allowTrust({
+          trustor: dto.trustor,
+          assetCode: dto.assetCode,
+          authorize: dto.authorize,
+        });
+      case 'path_payment_strict_send': {
+        const sendAsset =
+          dto.sendAsset.code === 'native' || !dto.sendAsset.code
+            ? Asset.native()
+            : new Asset(dto.sendAsset.code, dto.sendAsset.issuer!);
+        const destAsset =
+          dto.destAsset.code === 'native' || !dto.destAsset.code
+            ? Asset.native()
+            : new Asset(dto.destAsset.code, dto.destAsset.issuer!);
+        const path = (dto.path || []).map((a) =>
+          a.code === 'native' || !a.code ? Asset.native() : new Asset(a.code, a.issuer!),
+        );
+        return Operation.pathPaymentStrictSend({
+          sendAsset,
+          sendAmount: dto.sendAmount,
+          destination: dto.destination,
+          destAsset,
+          destMin: dto.destMin,
+          path,
+        });
+      }
+      case 'path_payment_strict_receive': {
+        const sendAsset =
+          dto.sendAsset.code === 'native' || !dto.sendAsset.code
+            ? Asset.native()
+            : new Asset(dto.sendAsset.code, dto.sendAsset.issuer!);
+        const destAsset =
+          dto.destAsset.code === 'native' || !dto.destAsset.code
+            ? Asset.native()
+            : new Asset(dto.destAsset.code, dto.destAsset.issuer!);
+        const path = (dto.path || []).map((a) =>
+          a.code === 'native' || !a.code ? Asset.native() : new Asset(a.code, a.issuer!),
+        );
+        return Operation.pathPaymentStrictReceive({
+          sendAsset,
+          sendMax: dto.sendMax,
+          destination: dto.destination,
+          destAsset,
+          destAmount: dto.destAmount,
+          path,
+        });
+      }
+      case 'manage_data':
+        return Operation.manageData({
+          name: dto.name,
+          value: dto.value ? Buffer.from(dto.value) : undefined,
+        });
+      default:
+        throw new BadRequestException(`Unknown operation type: ${(dto as any).type}`);
     }
   }
 }
