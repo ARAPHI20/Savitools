@@ -6,6 +6,7 @@ import {
   Body,
   Req,
   BadRequestException,
+  UnprocessableEntityException,
   UseGuards,
   Inject,
   Optional,
@@ -198,6 +199,49 @@ export class ContractsController {
     }
 
     throw new BadRequestException('Invalid wizard step');
+  @Post('wasm/upload')
+  @ApiCookieAuth()
+  @UseGuards(JwtAuthGuard, ContractAuthorizationGuard)
+  @ApiOperation({ summary: 'Upload and pin Soroban contract WASM from local file or Git repo with integrity verification' })
+  @ApiConsumes('multipart/form-data')
+  @ApiResponse({ status: 201, description: 'WASM uploaded and pinned successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid request or file' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Not authorized' })
+  @ApiResponse({ status: 422, description: 'SHA-256 checksum verification failed' })
+  async uploadWasm(@Req() req: FastifyRequest) {
+    const file = await req.file();
+    const fields = file ? file.fields : (req.body as any) || {};
+
+    let wasmBuffer: Buffer;
+    let filename = 'contract.wasm';
+
+    const checksumField = (fields.checksum as { value?: string })?.value || (req.body as any)?.checksum;
+    const gitRepoUrl = (fields.gitRepoUrl as { value?: string })?.value || (req.body as any)?.gitRepoUrl;
+    const gitArtifactPath = (fields.gitArtifactPath as { value?: string })?.value || (req.body as any)?.gitArtifactPath;
+
+    if (gitRepoUrl) {
+      if (!gitArtifactPath) {
+        throw new BadRequestException('gitArtifactPath is required when gitRepoUrl is provided');
+      }
+      wasmBuffer = await this.contractsService.fetchWasmFromGit(gitRepoUrl, gitArtifactPath);
+      filename = gitArtifactPath.split('/').pop() || 'contract.wasm';
+    } else if (file) {
+      filename = file.filename || 'contract.wasm';
+      if (!filename.endsWith('.wasm') && file.mimetype !== 'application/wasm' && file.mimetype !== 'application/octet-stream') {
+        throw new BadRequestException('Uploaded file must be a .wasm file');
+      }
+      wasmBuffer = await file.toBuffer();
+    } else {
+      throw new BadRequestException('Either a .wasm file or a gitRepoUrl is required');
+    }
+
+    return this.contractsService.storeUploadedWasm({
+      wasmBuffer,
+      filename,
+      checksum: typeof checksumField === 'string' ? checksumField : undefined,
+      source: gitRepoUrl ? 'git' : 'file',
+    });
   }
 
   @Post(':contractId/invoke')

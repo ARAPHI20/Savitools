@@ -23,6 +23,16 @@ describe('ContractsController', () => {
       uploadWasmOnly: jest.fn().mockResolvedValue({ wasmHash: 'abc', size: 10 }),
       invoke: jest.fn().mockResolvedValue({ result: null, txHash: 'tx' }),
       getInfo: jest.fn(),
+      storeUploadedWasm: jest.fn().mockResolvedValue({
+        wasmId: 'wasm_123',
+        contentHash: 'abc',
+        filename: 'contract.wasm',
+        size: 10,
+        sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        uploadedAt: new Date().toISOString(),
+        source: 'file',
+      }),
+      fetchWasmFromGit: jest.fn().mockResolvedValue(Buffer.from('wasm-bytes')),
     };
 
     const configValues: Record<string, string> = {
