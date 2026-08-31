@@ -339,10 +339,18 @@ export const toolDocs: ToolDocs[] = [
         ],
       },
       {
+        title: 'Search events',
+        steps: [
+          'Use the search box in the watch header to filter the feed by transaction hash, account, or asset.',
+          'The feed queries the same search endpoint the CSV export uses, so results stay consistent.',
+          'Clear the search to return to the full live feed.',
+        ],
+      },
+      {
         title: 'Export event history',
         steps: [
           'Click “Export CSV” in the watch header to download the event history as a spreadsheet-ready file.',
-          'The export applies the same filters as the on-screen feed.',
+          'The export applies the same filters as the on-screen feed — including any active search query — and is capped at 10,000 rows.',
         ],
       },
     ],
