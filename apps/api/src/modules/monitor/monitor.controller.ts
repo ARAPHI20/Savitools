@@ -1,178 +1,220 @@
 import {
-  Body,
   Controller,
-  Delete,
   Get,
-  HttpCode,
-  Param,
   Post,
+  Delete,
+  Body,
+  Param,
   Query,
   Res,
+  HttpStatus,
+  HttpCode,
   UseGuards,
+  NotFoundException,
+  ServiceUnavailableException,
+  Logger,
 } from '@nestjs/common';
-import {
-  ApiCookieAuth,
-  ApiOperation,
-  ApiParam,
-  ApiQuery,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import type { FastifyReply } from 'fastify';
-import { CSV_BOM, toCsvRow } from '../../common/csv';
-import {
-  AuthUser,
-  CurrentUser,
-} from '../auth/decorators/current-user.decorator';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AlertRuleDto, CreateWatchDto } from './dto/create-watch.dto';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { MonitorService } from './monitor.service';
+import { CreateWatchDto } from './dto/create-watch.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { RegisterWebhookDto } from './dto/register-webhook.dto';
-import { ExportEventsQueryDto } from './dto/export-events.dto';
-import { SearchEventsQueryDto } from './dto/search-events.dto';
-import { MonitorService } from './monitor.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
+import { ConfigService } from '@nestjs/config';
 
-@ApiTags('monitor')
-@ApiCookieAuth()
-@UseGuards(JwtAuthGuard)
 @Controller('monitor')
 export class MonitorController {
-  constructor(private readonly monitorService: MonitorService) {}
+  private readonly logger = new Logger(MonitorController.name);
+  private activeSseConnections = 0;
+  private readonly clientConnections = new Set<{
+    reply: FastifyReply;
+    lastActivity: number;
+    timer?: NodeJS.Timeout;
+    pingTimer?: NodeJS.Timeout;
+  }>();
+  private cleanupInterval?: NodeJS.Timeout;
+
+  constructor(
+    private readonly monitorService: MonitorService,
+    private readonly configService: ConfigService,
+  ) {
+    const idleTimeoutMs = 60_000;
+    this.cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const client of this.clientConnections) {
+        if (now - client.lastActivity > idleTimeoutMs) {
+          this.terminateConnection(client, HttpStatus.REQUEST_TIMEOUT);
+        }
+      }
+    }, 15_000);
+  }
+
+  private terminateConnection(client: {
+    reply: FastifyReply;
+    lastActivity: number;
+    timer?: NodeJS.Timeout;
+    pingTimer?: NodeJS.Timeout;
+  }, code?: number) {
+    if (client.timer) clearInterval(client.timer);
+    if (client.pingTimer) clearInterval(client.pingTimer);
+    if (this.clientConnections.has(client)) {
+      this.clientConnections.delete(client);
+      this.activeSseConnections = Math.max(0, this.activeSseConnections - 1);
+      try {
+        if (!client.reply.raw.writableEnded) {
+          if (code) {
+            client.reply.raw.statusCode = code;
+          }
+          client.reply.raw.end();
+        }
+      } catch (err) {
+        this.logger.error(`Error terminating client connection: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  @Get('metrics')
+  getMetrics() {
+    return {
+      activeSseConnections: this.activeSseConnections,
+      maxSseConnections: this.getMaxSseConnections(),
+    };
+  }
+
+  @Get('stream')
+  async stream(
+    @Res() reply: FastifyReply,
+    @Query('network') network?: string,
+  ): Promise<void> {
+    const maxConns = this.getMaxSseConnections();
+    if (this.activeSseConnections >= maxConns) {
+      reply.status(HttpStatus.SERVICE_UNAVAILABLE).send({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: 'Maximum SSE connections reached',
+        error: 'Service Unavailable',
+      });
+      return;
+    }
+
+    this.activeSseConnections++;
+
+    const clientInfo = {
+      reply,
+      lastActivity: Date.now(),
+      timer: undefined as NodeJS.Timeout | undefined,
+      pingTimer: undefined as NodeJS.Timeout | undefined,
+    };
+    this.clientConnections.add(clientInfo);
+
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.flushHeaders?.();
+
+    reply.raw.write(`data: ${JSON.stringify({ type: 'connected', network: network ?? 'testnet' })}\n\n`);
+
+    clientInfo.pingTimer = setInterval(() => {
+      try {
+        if (!reply.raw.writableEnded) {
+          reply.raw.write(': ping\n\n');
+          clientInfo.lastActivity = Date.now();
+        }
+      } catch (err) {
+        this.logger.error(`Failed to send heartbeat ping: ${err instanceof Error ? err.message : String(err)}`);
+        this.terminateConnection(clientInfo);
+      }
+    }, 30_000);
+
+    const cleanup = () => {
+      this.terminateConnection(clientInfo);
+    };
+
+    reply.raw.on('close', cleanup);
+    reply.raw.on('finish', cleanup);
+    reply.raw.on('error', cleanup);
+  }
+
+  private getMaxSseConnections(): number {
+    const envVal = this.configService.get<string>('MAX_SSE_CONNECTIONS');
+    if (envVal) {
+      const parsed = parseInt(envVal, 10);
+      if (!isNaN(parsed)) {
+        return parsed;
+      }
+    }
+    return 1000;
+  }
 
   @Post('watches')
-  @ApiOperation({ summary: 'Create a ledger watch' })
-  @ApiResponse({ status: 201, description: 'Watch created' })
-  createWatch(@CurrentUser() user: AuthUser, @Body() dto: CreateWatchDto) {
+  @UseGuards(JwtAuthGuard)
+  async createWatch(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateWatchDto,
+  ) {
     return this.monitorService.createWatch(user.id, dto);
   }
 
   @Get('watches')
-  @ApiOperation({ summary: 'List the current user watches' })
-  getWatches(@CurrentUser() user: AuthUser) {
-    return this.monitorService.getWatches(user.id);
+  @UseGuards(JwtAuthGuard)
+  async listWatches(
+    @CurrentUser() user: AuthUser,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.monitorService.listWatches(user.id, query);
+  }
+
+  @Get('watches/:id')
+  @UseGuards(JwtAuthGuard)
+  async getWatch(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ) {
+    return this.monitorService.getWatch(user.id, id);
   }
 
   @Delete('watches/:id')
-  @HttpCode(204)
-  @ApiParam({ name: 'id', description: 'Watch ID' })
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
   async deleteWatch(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-  ): Promise<void> {
+  ) {
     await this.monitorService.deleteWatch(user.id, id);
   }
 
   @Get('watches/:id/events')
-  @ApiOperation({ summary: 'Get paginated event history for a watch' })
-  getEvents(
+  @UseGuards(JwtAuthGuard)
+  async getWatchEvents(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Query() query: PaginationQueryDto,
   ) {
-    return this.monitorService.getEvents(user.id, id, query);
+    return this.monitorService.getWatchEvents(user.id, id, query);
   }
 
   @Get('watches/:id/alerts')
-  @ApiOperation({ summary: 'Get fired alerts for a watch' })
-  getAlerts(
+  @UseGuards(JwtAuthGuard)
+  async getAlertEvents(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Query() query: PaginationQueryDto,
   ) {
-    return this.monitorService.getAlerts(user.id, id, query);
+    return this.monitorService.getAlertEvents(user.id, id, query);
   }
 
-  @Post('watches/:id/alerts')
-  @ApiOperation({ summary: 'Add an alert rule to a watch' })
-  addAlertRule(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: AlertRuleDto,
-  ) {
-    return this.monitorService.addAlertRule(user.id, id, dto);
-  }
-
-  @Post('watches/:id/alerts/:alertId/resend')
-  @ApiOperation({ summary: 'Re-send a fired alert' })
-  resendAlert(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Param('alertId') alertId: string,
-  ) {
-    return this.monitorService.resendAlert(user.id, id, alertId);
-  }
-
-  @Post('webhooks')
-  @ApiOperation({ summary: 'Register the current user monitor webhook' })
-  registerWebhook(
+  @Post('webhook')
+  @UseGuards(JwtAuthGuard)
+  async registerWebhook(
     @CurrentUser() user: AuthUser,
     @Body() dto: RegisterWebhookDto,
   ) {
     return this.monitorService.registerWebhook(user.id, dto);
   }
 
-  @Get('search')
-  @ApiOperation({ summary: 'Search watch events across the current user watches' })
-  @ApiQuery({ name: 'watchId', required: false })
-  @ApiQuery({ name: 'eventType', required: false, enum: ['transaction', 'payment', 'contract'] })
-  @ApiQuery({ name: 'q', required: false, description: 'Free-text search across event payloads' })
-  @ApiQuery({ name: 'from', required: false, description: 'ISO date — events at or after this time' })
-  @ApiQuery({ name: 'to', required: false, description: 'ISO date — events at or before this time' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  searchEvents(@CurrentUser() user: AuthUser, @Query() query: SearchEventsQueryDto) {
-    return this.monitorService.searchEvents(user.id, query);
-  }
-
-  @Get('search/export')
-  @ApiOperation({
-    summary: 'Export monitor search results as CSV (UTF-8 BOM, streamed in chunks)',
-  })
-  @ApiQuery({ name: 'watchId', required: false })
-  @ApiQuery({ name: 'eventType', required: false, enum: ['transaction', 'payment', 'contract'] })
-  @ApiQuery({ name: 'q', required: false, description: 'Free-text search across event payloads' })
-  @ApiQuery({ name: 'from', required: false, description: 'ISO date — events at or after this time' })
-  @ApiQuery({ name: 'to', required: false, description: 'ISO date — events at or before this time' })
-  async exportSearch(
-    @CurrentUser() user: AuthUser,
-    @Query() query: ExportEventsQueryDto,
-    @Res() reply: FastifyReply,
-  ) {
-    reply.hijack();
-    reply.header('Content-Type', 'text/csv; charset=utf-8');
-    reply.header(
-      'Content-Disposition',
-      'attachment; filename="monitor-search.csv"',
-    );
-    reply.raw.write(CSV_BOM);
-    reply.raw.write(
-      toCsvRow([
-        'event_type',
-        'occurred_at',
-        'amount',
-        'asset',
-        'from',
-        'to',
-        'transaction_hash',
-        'paging_token',
-        'watch_id',
-        'payload',
-      ]) + '\n',
-    );
-
-    try {
-      await this.monitorService.streamSearchEventsCsv(
-        user.id,
-        query,
-        (values) => {
-          reply.raw.write(toCsvRow(values) + '\n');
-        },
-        () => {
-          reply.raw.end();
-        },
-      );
-    } catch (err) {
-      reply.raw.end();
-    }
+  @Get('webhook')
+  @UseGuards(JwtAuthGuard)
+  async getWebhook(@CurrentUser() user: AuthUser) {
+    return this.monitorService.getWebhook(user.id);
   }
 }
