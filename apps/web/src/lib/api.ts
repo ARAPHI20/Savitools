@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 
 export interface AuthUser {
   id: string;
@@ -15,7 +15,7 @@ async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const message = Array.isArray(body.message)
-      ? body.message.join(', ')
+      ? body.message.join(", ")
       : (body.message ?? response.statusText);
     throw new Error(message);
   }
@@ -33,9 +33,9 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const response = await fetch(`${API_URL}/v1${path}`, {
     ...init,
-    credentials: 'include',
+    credentials: "include",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...(init.headers ?? {}),
     },
   });
@@ -44,43 +44,43 @@ export async function apiFetch<T>(
 }
 
 export async function register(email: string, password: string) {
-  return apiFetch<{ userId: string; message: string }>('/auth/register', {
-    method: 'POST',
+  return apiFetch<{ userId: string; message: string }>("/auth/register", {
+    method: "POST",
     body: JSON.stringify({ email, password }),
   });
 }
 
 export async function verifyEmail(token: string) {
-  return apiFetch<{ user: AuthUser }>('/auth/verify-email', {
-    method: 'POST',
+  return apiFetch<{ user: AuthUser }>("/auth/verify-email", {
+    method: "POST",
     body: JSON.stringify({ token }),
   });
 }
 
 export async function login(email: string, password: string) {
-  return apiFetch<{ user: AuthUser }>('/auth/login', {
-    method: 'POST',
+  return apiFetch<{ user: AuthUser }>("/auth/login", {
+    method: "POST",
     body: JSON.stringify({ email, password }),
   });
 }
 
 export async function logout() {
-  return apiFetch<{ success: boolean }>('/auth/logout', { method: 'POST' });
+  return apiFetch<{ success: boolean }>("/auth/logout", { method: "POST" });
 }
 
 export async function refreshSession() {
-  return apiFetch<{ user?: AuthUser; authenticated?: false }>('/auth/refresh', {
-    method: 'POST',
+  return apiFetch<{ user?: AuthUser; authenticated?: false }>("/auth/refresh", {
+    method: "POST",
   });
 }
 
 export async function getCurrentUser() {
-  return apiFetch<{ user: AuthUser | null }>('/auth/me');
+  return apiFetch<{ user: AuthUser | null }>("/auth/me");
 }
 
 export async function connectFluxa(apiKey: string) {
-  return apiFetch<{ user: AuthUser }>('/auth/fluxa', {
-    method: 'POST',
+  return apiFetch<{ user: AuthUser }>("/auth/fluxa", {
+    method: "POST",
     body: JSON.stringify({ apiKey }),
   });
 }
@@ -94,24 +94,27 @@ export interface ConnectedAccount {
 }
 
 export async function listConnectedAccounts() {
-  return apiFetch<ConnectedAccount[]>('/auth/connect');
+  return apiFetch<ConnectedAccount[]>("/auth/connect");
 }
 
 export async function beginFluxaOAuth() {
-  return apiFetch<{ redirectUrl: string }>('/auth/connect/fluxa', {
-    method: 'POST',
+  return apiFetch<{ redirectUrl: string }>("/auth/connect/fluxa", {
+    method: "POST",
   });
 }
 
 export async function disconnectProvider(provider: string) {
-  return apiFetch<{ success: boolean }>(`/auth/connect/${encodeURIComponent(provider)}`, {
-    method: 'DELETE',
-  });
+  return apiFetch<{ success: boolean }>(
+    `/auth/connect/${encodeURIComponent(provider)}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 /* ─── API Key Vault ──────────────────────────────────────────────────────── */
 
-export type VaultKeyProvider = 'fluxa' | 'crowdpay' | 'custom';
+export type VaultKeyProvider = "fluxa" | "crowdpay" | "custom";
 
 export interface VaultKey {
   id: string;
@@ -121,20 +124,27 @@ export interface VaultKey {
 }
 
 export async function listVaultKeys() {
-  return apiFetch<VaultKey[]>('/vault/keys');
+  return apiFetch<VaultKey[]>("/vault/keys");
 }
 
-export async function createVaultKey(name: string, provider: VaultKeyProvider, key: string) {
-  return apiFetch<VaultKey>('/vault/keys', {
-    method: 'POST',
+export async function createVaultKey(
+  name: string,
+  provider: VaultKeyProvider,
+  key: string,
+) {
+  return apiFetch<VaultKey>("/vault/keys", {
+    method: "POST",
     body: JSON.stringify({ name, provider, key }),
   });
 }
 
 export async function deleteVaultKey(id: string) {
-  return apiFetch<{ success: boolean }>(`/vault/keys/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
+  return apiFetch<{ success: boolean }>(
+    `/vault/keys/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 /* ─── Sessions ───────────────────────────────────────────────────────────── */
@@ -148,16 +158,19 @@ export interface Session {
 }
 
 export async function listSessions() {
-  return apiFetch<Session[]>('/auth/sessions');
+  return apiFetch<Session[]>("/auth/sessions");
 }
 
 export async function revokeSession(id: string) {
-  return apiFetch<{ success: boolean }>(`/auth/sessions/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
+  return apiFetch<{ success: boolean }>(
+    `/auth/sessions/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
-export type WorkspaceTool = 'sandbox' | 'inspector' | 'webhooks' | 'composer';
+export type WorkspaceTool = "sandbox" | "inspector" | "webhooks" | "composer";
 
 export async function getWorkspace(tool: WorkspaceTool) {
   return apiFetch<{ tool: WorkspaceTool; data: Record<string, unknown> }>(
@@ -172,7 +185,7 @@ export async function saveWorkspace(
   return apiFetch<{ tool: WorkspaceTool; data: Record<string, unknown> }>(
     `/workspaces/${tool}`,
     {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify({ data }),
     },
   );
@@ -209,8 +222,8 @@ async function apiFetchFormData<T>(
   formData: FormData,
 ): Promise<T> {
   const response = await fetch(`${API_URL}/v1${path}`, {
-    method: 'POST',
-    credentials: 'include',
+    method: "POST",
+    credentials: "include",
     body: formData,
   });
 
@@ -218,7 +231,7 @@ async function apiFetchFormData<T>(
 }
 
 export async function deployContract(formData: FormData) {
-  return apiFetchFormData<DeployResult>('/contracts/deploy', formData);
+  return apiFetchFormData<DeployResult>("/contracts/deploy", formData);
 }
 
 export async function invokeContract(
@@ -227,7 +240,7 @@ export async function invokeContract(
   args: unknown[],
 ) {
   return apiFetch<InvokeResult>(`/contracts/${contractId}/invoke`, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify({ functionName, args }),
   });
 }
@@ -238,7 +251,7 @@ export async function getContractInfo(contractId: string) {
 
 /* ─── Playground ─────────────────────────────────────────────────────────── */
 
-export type PlaygroundProvider = 'fluxa' | 'crowdpay';
+export type PlaygroundProvider = "fluxa" | "crowdpay";
 
 export interface PlaygroundApiKey {
   id: string;
@@ -272,8 +285,8 @@ export async function fetchPlaygroundSpec(provider: PlaygroundProvider) {
 }
 
 export async function proxyPlaygroundRequest(dto: PlaygroundProxyRequest) {
-  return apiFetch<PlaygroundProxyResult>('/playground/proxy', {
-    method: 'POST',
+  return apiFetch<PlaygroundProxyResult>("/playground/proxy", {
+    method: "POST",
     body: JSON.stringify(dto),
   });
 }
@@ -284,29 +297,29 @@ export async function savePlaygroundApiKey(
   apiKey: string,
 ) {
   return apiFetch<{ id: string; label: string; provider: PlaygroundProvider }>(
-    '/playground/keys',
+    "/playground/keys",
     {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify({ provider, label, apiKey }),
     },
   );
 }
 
 export async function listPlaygroundApiKeys() {
-  return apiFetch<PlaygroundApiKey[]>('/playground/keys');
+  return apiFetch<PlaygroundApiKey[]>("/playground/keys");
 }
 
 export async function deletePlaygroundApiKey(id: string) {
   return apiFetch<{ success: boolean }>(`/playground/keys/${id}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
 }
 
 /* ─── Simulator ──────────────────────────────────────────────────────────── */
 
-export type Direction = 'strict_send' | 'strict_receive';
-export type AssetType = 'native' | 'credit_alphanum4' | 'credit_alphanum12';
-export type NetworkChoice = 'mainnet' | 'testnet';
+export type Direction = "strict_send" | "strict_receive";
+export type AssetType = "native" | "credit_alphanum4" | "credit_alphanum12";
+export type NetworkChoice = "mainnet" | "testnet";
 
 export interface SimulatedAsset {
   type: AssetType;
@@ -364,22 +377,22 @@ export interface EstimateParams {
 
 export async function findSimulatorPaths(params: FindPathsParams) {
   const searchParams = new URLSearchParams();
-  searchParams.set('direction', params.direction);
-  searchParams.set('source_asset_type', params.source_asset_type);
-  searchParams.set('amount', params.amount);
-  searchParams.set('destination_asset_type', params.destination_asset_type);
+  searchParams.set("direction", params.direction);
+  searchParams.set("source_asset_type", params.source_asset_type);
+  searchParams.set("amount", params.amount);
+  searchParams.set("destination_asset_type", params.destination_asset_type);
   if (params.source_asset_code)
-    searchParams.set('source_asset_code', params.source_asset_code);
+    searchParams.set("source_asset_code", params.source_asset_code);
   if (params.source_asset_issuer)
-    searchParams.set('source_asset_issuer', params.source_asset_issuer);
+    searchParams.set("source_asset_issuer", params.source_asset_issuer);
   if (params.destination_asset_code)
-    searchParams.set('destination_asset_code', params.destination_asset_code);
+    searchParams.set("destination_asset_code", params.destination_asset_code);
   if (params.destination_asset_issuer)
     searchParams.set(
-      'destination_asset_issuer',
+      "destination_asset_issuer",
       params.destination_asset_issuer,
     );
-  if (params.network) searchParams.set('network', params.network);
+  if (params.network) searchParams.set("network", params.network);
 
   return apiFetch<FindPathsResponse>(
     `/simulator/paths?${searchParams.toString()}`,
@@ -387,8 +400,8 @@ export async function findSimulatorPaths(params: FindPathsParams) {
 }
 
 export async function estimateSlippage(params: EstimateParams) {
-  return apiFetch<EstimateResult>('/simulator/estimate', {
-    method: 'POST',
+  return apiFetch<EstimateResult>("/simulator/estimate", {
+    method: "POST",
     body: JSON.stringify(params),
   });
 }
@@ -425,7 +438,7 @@ export interface MidPriceSnapshot {
 export async function getOrderbook(
   selling: string,
   buying: string,
-  network: NetworkChoice = 'testnet',
+  network: NetworkChoice = "testnet",
 ) {
   const params = new URLSearchParams({ selling, buying, network });
   return apiFetch<OrderbookResult>(`/simulator/orderbook?${params.toString()}`);
@@ -434,16 +447,18 @@ export async function getOrderbook(
 export async function getOrderbookHistory(
   selling: string,
   buying: string,
-  network: NetworkChoice = 'testnet',
+  network: NetworkChoice = "testnet",
 ) {
   const params = new URLSearchParams({ selling, buying, network });
-  return apiFetch<MidPriceSnapshot[]>(`/simulator/orderbook/history?${params.toString()}`);
+  return apiFetch<MidPriceSnapshot[]>(
+    `/simulator/orderbook/history?${params.toString()}`,
+  );
 }
 
 /* ─── Webhooks ──────────────────────────────────────────────────────────── */
 
 export interface WebhookTemplate {
-  provider: 'crowdpay' | 'fluxa';
+  provider: "crowdpay" | "fluxa";
   eventType: string;
   description: string;
   schema: Record<string, string>;
@@ -472,23 +487,23 @@ export interface WebhookHistoryEntry {
 }
 
 export async function fetchWebhookTemplates() {
-  return apiFetch<WebhookTemplate[]>('/webhooks/templates');
+  return apiFetch<WebhookTemplate[]>("/webhooks/templates");
 }
 
 export async function sendWebhook(dto: WebhookSendRequest) {
-  return apiFetch<WebhookHistoryEntry>('/webhooks/send', {
-    method: 'POST',
+  return apiFetch<WebhookHistoryEntry>("/webhooks/send", {
+    method: "POST",
     body: JSON.stringify(dto),
   });
 }
 
 export async function fetchWebhookHistory() {
-  return apiFetch<WebhookHistoryEntry[]>('/webhooks/history');
+  return apiFetch<WebhookHistoryEntry[]>("/webhooks/history");
 }
 
 export async function replayWebhook(id: string) {
   return apiFetch<WebhookHistoryEntry>(`/webhooks/replay/${id}`, {
-    method: 'POST',
+    method: "POST",
   });
 }
 /* ─── Wallet ─────────────────────────────────────────────────────────────── */
@@ -527,14 +542,14 @@ export interface SendPaymentResult {
 }
 
 export async function generateKeypair() {
-  return apiFetch<GenerateKeypairResult>('/wallet/generate', {
-    method: 'POST',
+  return apiFetch<GenerateKeypairResult>("/wallet/generate", {
+    method: "POST",
   });
 }
 
 export async function fundFromFriendbot(publicKey: string) {
-  return apiFetch<FundResult>('/wallet/fund', {
-    method: 'POST',
+  return apiFetch<FundResult>("/wallet/fund", {
+    method: "POST",
     body: JSON.stringify({ publicKey }),
   });
 }
@@ -551,8 +566,8 @@ export async function sendPayment(
   asset: string,
   amount: string,
 ) {
-  return apiFetch<SendPaymentResult>('/wallet/payment', {
-    method: 'POST',
+  return apiFetch<SendPaymentResult>("/wallet/payment", {
+    method: "POST",
     body: JSON.stringify({ sourceSecret, destination, asset, amount }),
   });
 }
@@ -595,8 +610,8 @@ export interface SandboxPaymentResult {
 }
 
 export async function sandboxFund(publicKey: string) {
-  return apiFetch<SandboxFundResult>('/sandbox/fund', {
-    method: 'POST',
+  return apiFetch<SandboxFundResult>("/sandbox/fund", {
+    method: "POST",
     body: JSON.stringify({ publicKey }),
   });
 }
@@ -614,8 +629,8 @@ export async function sandboxSendPayment(
   amount: string,
   memo?: string,
 ) {
-  return apiFetch<SandboxPaymentResult>('/sandbox/payment', {
-    method: 'POST',
+  return apiFetch<SandboxPaymentResult>("/sandbox/payment", {
+    method: "POST",
     body: JSON.stringify({ fromSecret, toPublicKey, asset, amount, memo }),
   });
 }
@@ -641,7 +656,7 @@ export interface SimulateStrictSendResult {
   sourceAmount: string;
   destAsset: string;
   network: string;
-  mode: 'strict_send';
+  mode: "strict_send";
   totalPathsFound: number;
   paths: SimulatorPath[];
   bestPath: SimulatorPath;
@@ -653,7 +668,7 @@ export interface SimulateStrictReceiveResult {
   destAsset: string;
   destAmount: string;
   network: string;
-  mode: 'strict_receive';
+  mode: "strict_receive";
   totalPathsFound: number;
   paths: SimulatorPath[];
   bestPath: SimulatorPath;
@@ -686,8 +701,8 @@ export async function simulateStrictSend(dto: {
   destAsset: string;
   network: string;
 }) {
-  return apiFetch<SimulateStrictSendResult>('/simulator/path-send', {
-    method: 'POST',
+  return apiFetch<SimulateStrictSendResult>("/simulator/path-send", {
+    method: "POST",
     body: JSON.stringify(dto),
   });
 }
@@ -698,8 +713,8 @@ export async function simulateStrictReceive(dto: {
   destAsset: string;
   network: string;
 }) {
-  return apiFetch<SimulateStrictReceiveResult>('/simulator/path-receive', {
-    method: 'POST',
+  return apiFetch<SimulateStrictReceiveResult>("/simulator/path-receive", {
+    method: "POST",
     body: JSON.stringify(dto),
   });
 }
@@ -770,7 +785,7 @@ export interface TxSummary {
 
 export async function inspectTransaction(
   hash: string,
-  network: 'testnet' | 'mainnet' = 'testnet',
+  network: "testnet" | "mainnet" = "testnet",
 ) {
   return apiFetch<TransactionBreakdown>(
     `/inspector/tx/${encodeURIComponent(hash)}?network=${network}`,
@@ -779,7 +794,7 @@ export async function inspectTransaction(
 
 export async function getAccountTransactions(
   publicKey: string,
-  network: 'testnet' | 'mainnet' = 'testnet',
+  network: "testnet" | "mainnet" = "testnet",
 ) {
   return apiFetch<TxSummary[]>(
     `/inspector/account/${encodeURIComponent(publicKey)}/txs?network=${network}`,
@@ -788,10 +803,10 @@ export async function getAccountTransactions(
 
 export async function decodeXdr(
   xdr: string,
-  network: 'testnet' | 'mainnet' = 'testnet',
+  network: "testnet" | "mainnet" = "testnet",
 ) {
-  return apiFetch<TransactionBreakdown>('/inspector/decode-xdr', {
-    method: 'POST',
+  return apiFetch<TransactionBreakdown>("/inspector/decode-xdr", {
+    method: "POST",
     body: JSON.stringify({ xdr, network }),
   });
 }
@@ -866,7 +881,7 @@ export interface SepInfo {
   name: string;
   supported: boolean;
   endpoint: string | null;
-  probeStatus: 'green' | 'yellow' | 'red' | 'none';
+  probeStatus: "green" | "yellow" | "red" | "none";
 }
 
 export interface SepResult {
@@ -893,9 +908,9 @@ export async function fetchSepSupport(domain: string) {
 
 /* ─── Account Relationship Graph ───────────────────────────────────────── */
 
-export type GraphMode = 'signers' | 'offers' | 'payments' | 'all';
+export type GraphMode = "signers" | "offers" | "payments" | "all";
 
-export type GraphNodeType = 'account' | 'multisig' | 'anchor' | 'contract';
+export type GraphNodeType = "account" | "multisig" | "anchor" | "contract";
 
 export interface GraphNode {
   id: string;
@@ -905,10 +920,10 @@ export interface GraphNode {
 }
 
 export type GraphRelationship =
-  | 'signs_for'
-  | 'co_signer'
-  | 'offer_match'
-  | 'payment';
+  | "signs_for"
+  | "co_signer"
+  | "offer_match"
+  | "payment";
 
 export interface GraphEdge {
   source: string;
@@ -931,13 +946,16 @@ export interface GraphQuery {
   rootAccount: string;
   depth: number;
   mode: GraphMode;
-  network: 'testnet' | 'mainnet';
+  network: "testnet" | "mainnet";
 }
 
 export async function buildAccountGraph(query: GraphQuery) {
-  return apiFetch<GraphResult>('/transaction/graph', {
-    method: 'POST',
+  return apiFetch<GraphResult>("/transaction/graph", {
+    method: "POST",
     body: JSON.stringify(query),
+  });
+}
+
 /* ─── Contract Events ───────────────────────────────────────────────────── */
 
 export interface DecodedScVal {
@@ -974,7 +992,7 @@ export interface ContractEventsQuery {
   endLedger?: number;
   cursor?: string;
   limit?: number;
-  type?: 'contract' | 'system' | 'diagnostic';
+  type?: "contract" | "system" | "diagnostic";
 }
 
 export interface ReplayEventResult {
@@ -997,10 +1015,12 @@ export const CONTRACT_EVENTS_MAX_LIMIT = 200;
 export async function getContractEvents(query: ContractEventsQuery) {
   const params = new URLSearchParams();
   Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') params.set(key, String(value));
+    if (value !== undefined && value !== "") params.set(key, String(value));
   });
 
-  return apiFetch<ContractEventsResult>(`/contracts/events?${params.toString()}`);
+  return apiFetch<ContractEventsResult>(
+    `/contracts/events?${params.toString()}`,
+  );
 }
 
 /**
@@ -1013,8 +1033,8 @@ export async function filterContractEvents(
   criteria: unknown[],
 ) {
   return apiFetch<{ events: DecodedContractEvent[]; count: number }>(
-    '/contracts/events/filter',
-    { method: 'POST', body: JSON.stringify({ events, criteria }) },
+    "/contracts/events/filter",
+    { method: "POST", body: JSON.stringify({ events, criteria }) },
   );
 }
 
@@ -1023,8 +1043,8 @@ export async function replayContractEvents(
   events: DecodedContractEvent[],
   secret?: string,
 ) {
-  return apiFetch<ReplaySummary>('/contracts/events/replay', {
-    method: 'POST',
+  return apiFetch<ReplaySummary>("/contracts/events/replay", {
+    method: "POST",
     body: JSON.stringify({ webhookUrl, events, ...(secret ? { secret } : {}) }),
   });
 }
