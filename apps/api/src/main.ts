@@ -20,9 +20,10 @@ async function bootstrap() {
   await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
 
   const config = app.get(ConfigService);
-  const port = config.get<number>("API_PORT", 3001);
-  const prefix = config.get<string>("API_PREFIX", "api");
-  const webOrigin = config.get<string>("WEB_ORIGIN", "http://localhost:3000");
+  const port = config.get<number>('API_PORT', 3001);
+  const prefix = config.get<string>('API_PREFIX', 'api');
+  const webOrigin = config.get<string>('WEB_ORIGIN', 'http://localhost:3000');
+  const nodeEnv = config.get<string>('NODE_ENV', 'development');
 
   app.setGlobalPrefix(prefix, {
     exclude: [{ path: "metrics", method: RequestMethod.GET }],
@@ -44,9 +45,30 @@ async function bootstrap() {
     }),
   );
 
+  // Block GraphQL introspection in production
+  if (nodeEnv === 'production') {
+    const fastify = app.getHttpAdapter().getInstance();
+    fastify.addHook('preHandler', async (request, reply) => {
+      const rawQuery =
+        (request.body && typeof request.body === 'object' && request.body.query) ||
+        (request.body && typeof request.body === 'string' ? request.body : null) ||
+        (request.query && request.query.query) ||
+        null;
+
+      if (
+        typeof rawQuery === 'string' &&
+        /\b___schema|__type\b/i.test(rawQuery)
+      ) {
+        await reply.code(400).send({
+          errors: [{ message: 'GraphQL introspection is not allowed in production.' }],
+        });
+        return;
+      }
+    });
+  }
+
   // Only enable Swagger in development and staging environments
-  const nodeEnv = config.get<string>("NODE_ENV", "development");
-  if (nodeEnv !== "production") {
+  if (nodeEnv !== 'production') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle("SaviTools API")
       .setDescription("Developer infrastructure for the Stellar ecosystem")
