@@ -8,6 +8,8 @@ import {
   SimulateTransactionResult,
 } from '@/lib/composer-api';
 import { useNetwork } from '@/lib/network-context';
+import { addRecentItem } from '@/lib/recent-items';
+import { useCommandPalette } from '@/components/command-palette';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ComposerToolbar } from './composer-toolbar';
 import { OperationForm } from './operation-form';
@@ -76,6 +78,7 @@ function SourceAccountInput({
 
 export function ComposerTool() {
   const { network } = useNetwork();
+  const { registerContextActions } = useCommandPalette();
 
   // Remote manifest
   const [manifest, setManifest] = useState<OperationManifestEntry[]>([]);
@@ -119,7 +122,6 @@ export function ComposerTool() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load operation manifest';
       setManifestError(message);
-      setManifest([]);
     } finally {
       setManifestLoading(false);
     }
@@ -130,43 +132,45 @@ export function ComposerTool() {
   }, [loadManifest]);
 
   // ---------------------------------------------------------------------------
-  // Auto-build XDR whenever ops / source / memo / network change
+  // Rebuild XDR when operations / source / memo change (debounced 300ms)
   // ---------------------------------------------------------------------------
-  const triggerBuild = useCallback(
-    (ops: ComposedOperation[], src: string, m: string, net: typeof network) => {
-      if (buildDebounce.current) clearTimeout(buildDebounce.current);
-      if (!src || ops.length === 0) {
+  const rebuildXdr = useCallback(
+    async (ops: ComposedOperation[], src: string, mem: string) => {
+      if (!src.trim() || ops.length === 0) {
         setXdr(null);
         return;
       }
       setXdrBuilding(true);
-      buildDebounce.current = setTimeout(async () => {
-        try {
-          const result = await buildTransaction({
-            sourceAccount: src,
-            network: net,
-            memo: m || undefined,
-            operations: ops.map((op) => ({ type: op.type, ...op.fields })),
-          });
-          setXdr(result.xdr);
-        } catch {
-          setXdr(null);
-        } finally {
-          setXdrBuilding(false);
-        }
-      }, 600);
+      try {
+        const payload = {
+          sourceAccount: src.trim(),
+          memo: mem.trim() || undefined,
+          operations: ops.map((op) => ({ type: op.type, fields: op.fields })),
+          network,
+        };
+        const built = await buildTransaction(payload);
+        setXdr(built.xdr);
+      } catch {
+        setXdr(null);
+      } finally {
+        setXdrBuilding(false);
+      }
     },
-    [],
+    [network],
   );
 
   useEffect(() => {
-    triggerBuild(operations, sourceAccount, memo, network);
-    setSimResult(null);
-    setSubmitResult(null);
-  }, [operations, sourceAccount, memo, network, triggerBuild]);
+    if (buildDebounce.current) clearTimeout(buildDebounce.current);
+    buildDebounce.current = setTimeout(() => {
+      void rebuildXdr(operations, sourceAccount, memo);
+    }, 300);
+    return () => {
+      if (buildDebounce.current) clearTimeout(buildDebounce.current);
+    };
+  }, [operations, sourceAccount, memo, rebuildXdr]);
 
   // ---------------------------------------------------------------------------
-  // Handlers
+  // Operation handlers
   // ---------------------------------------------------------------------------
 
   const handleAdd = (type: string) => {
@@ -190,7 +194,7 @@ export function ComposerTool() {
     );
   };
 
-  const handleSimulate = async () => {
+  const handleSimulate = useCallback(async () => {
     if (!xdr) return;
     setSimLoading(true);
     setSimError(null);
@@ -198,16 +202,51 @@ export function ComposerTool() {
     try {
       const result = await simulateTransaction({ xdr, network });
       setSimResult(result);
+      addRecentItem({
+        category: 'composer',
+        title: `Composed Tx (${operations.length} op${operations.length !== 1 ? 's' : ''})`,
+        subtitle: `Simulated successfully on ${network}`,
+        href: '/composer',
+      });
     } catch (e) {
       setSimError(e instanceof Error ? e.message : 'Simulation error');
     } finally {
       setSimLoading(false);
     }
-  };
+  }, [xdr, network, operations.length]);
+
+  // Register contextual shortcuts for Cmd+Enter and Cmd+C
+  useEffect(() => {
+    const unregister = registerContextActions({
+      actionLabel: 'Simulate Composed Transaction',
+      runAction: () => {
+        if (xdr && !simLoading) {
+          void handleSimulate();
+        }
+      },
+      copyTxHash: () => {
+        if (submitResult?.hash) {
+          void navigator.clipboard.writeText(submitResult.hash);
+          return true;
+        }
+        return false;
+      },
+      txHash: submitResult?.hash,
+    });
+
+    return unregister;
+  }, [xdr, simLoading, submitResult?.hash, registerContextActions, handleSimulate]);
+
 
   const handleSignSubmitSuccess = (hash: string) => {
     setSubmitting(false);
     setSubmitResult({ success: true, hash });
+    addRecentItem({
+      category: 'composer',
+      title: `Submitted Tx (${operations.length} ops)`,
+      subtitle: `Hash: ${hash.slice(0, 16)}… · ${network}`,
+      href: `/inspector?hash=${hash}`,
+    });
   };
 
   const handleSignSubmitError = (message: string) => {

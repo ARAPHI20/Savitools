@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { addRecentItem } from '@/lib/recent-items';
+import { useCommandPalette, ShortcutBadge } from '@/components/command-palette';
 import {
   Send,
   RotateCcw,
@@ -21,6 +23,7 @@ import {
   type WebhookTemplate,
   type WebhookHistoryEntry,
 } from '@/lib/api';
+
 
 function formatJson(data: unknown): string {
   try {
@@ -114,13 +117,14 @@ export function WebhookTester() {
   const [templates, setTemplates] = useState<WebhookTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
-
+  const { registerContextActions } = useCommandPalette();
   const [endpointUrl, setEndpointUrl] = useState('');
   const [selectedEventType, setSelectedEventType] = useState('');
-  const [payloadEditor, setPayloadEditor] = useState('');
-  const [payloadValid, setPayloadValid] = useState(true);
   const [secret, setSecret] = useState('');
   const [signature, setSignature] = useState('');
+
+  const [payloadEditor, setPayloadEditor] = useState('');
+  const [payloadValid, setPayloadValid] = useState(true);
 
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<WebhookHistoryEntry | null>(null);
@@ -185,15 +189,19 @@ export function WebhookTester() {
             .map((b) => b.toString(16).padStart(2, '0'))
             .join('');
           setSignature(hex);
-        });
+        })
+        .catch(() => setSignature(''));
     } catch {
       setSignature('');
     }
-  }, [secret, payloadEditor]);
+  }, [payloadEditor, secret]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setEventDropdownOpen(false);
       }
     }
@@ -222,7 +230,7 @@ export function WebhookTester() {
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!endpointUrl || !selectedEventType || !payloadValid) return;
 
     let parsedPayload: Record<string, unknown> | undefined;
@@ -246,6 +254,12 @@ export function WebhookTester() {
       });
       setResult(entry);
       setHistory((prev) => [entry, ...prev].slice(0, 50));
+      addRecentItem({
+        category: 'webhooks',
+        title: `Webhook: ${selectedEventType}`,
+        subtitle: `${endpointUrl} · ${entry.statusCode ? `HTTP ${entry.statusCode}` : 'Sent'}`,
+        href: '/webhooks',
+      });
 
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -255,7 +269,19 @@ export function WebhookTester() {
     } finally {
       setSending(false);
     }
-  };
+  }, [endpointUrl, selectedEventType, payloadValid, payloadEditor, secret]);
+
+  useEffect(() => {
+    const unregister = registerContextActions({
+      actionLabel: 'Send Webhook Test',
+      runAction: () => {
+        if (endpointUrl && selectedEventType && payloadValid && !sending) {
+          void handleSend();
+        }
+      },
+    });
+    return unregister;
+  }, [endpointUrl, selectedEventType, payloadValid, sending, registerContextActions, handleSend]);
 
   const handleReplay = async (id: string) => {
     setSending(true);
@@ -298,8 +324,9 @@ export function WebhookTester() {
         <button
           type="button"
           onClick={() => void loadTemplates()}
-          className="mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-muted"
         >
+          <RotateCcw className="h-3.5 w-3.5" />
           Retry
         </button>
       </div>
@@ -422,6 +449,7 @@ export function WebhookTester() {
           type="button"
           onClick={() => void handleSend()}
           disabled={sending || !endpointUrl || !selectedEventType || !payloadValid}
+          title="Send Webhook (Cmd+Enter)"
           className={cn(
             'flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors',
             sending || !endpointUrl || !selectedEventType || !payloadValid
@@ -431,6 +459,7 @@ export function WebhookTester() {
         >
           <Send className="h-4 w-4" />
           {sending ? 'Sending…' : 'Send'}
+          <ShortcutBadge shortcut="Cmd+Enter" className="hidden sm:inline-flex bg-primary-foreground/20 text-primary-foreground border-transparent text-[9px]" />
         </button>
 
         {endpointUrl && payloadEditor && payloadValid && (
